@@ -43,9 +43,8 @@ class SpeechConfig:
     sample_rate: int = 16_000           # pipeline INPUT convention: 16 kHz mono
     # Piper via the piper-tts Python API (no PATH binary). The voice .onnx (+ .json)
     # lives in models/; download with `python -m piper.download_voices <voice> --download-dir models`.
-    # 22050 Hz — playback uses the voice's own rate, input stays 16k. libritts_r-medium
-    # (audiobook-trained) chosen for the most natural tone in the catalog.
-    piper_voice: str = "en_US-libritts_r-medium"
+    # 22050 Hz — playback uses the voice's own rate, input stays 16k. amy-medium (warmer).
+    piper_voice: str = "en_US-amy-medium"
 
 
 @dataclass(frozen=True)
@@ -85,6 +84,8 @@ class MemoryConfig:
     embedder_model: str = "BAAI/bge-small-en-v1.5"  # CPU (fastembed) — must NOT be a GPU model
     recall_k: int = 3                   # strict read budget: top-3 facts per turn
     recent_turns: int = 12              # rolling history kept in context
+    context_char_budget: int = 2400     # cap on the recent-turns tail (~600 tokens); keeps
+                                        # persona + facts + history well under num_ctx (4096)
     min_fact_confidence: float = 0.6    # gate out low-confidence extracted facts
 
 

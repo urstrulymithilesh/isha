@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 
 from isha.audio.vad import Vad
-from isha.core.interfaces import LLMError
+from isha.core.interfaces import Fact, LLMError
 from isha.core.state import ConversationState
 from isha.llm.echo import EchoLLM
 from isha.orchestrator import Orchestrator
@@ -214,6 +214,7 @@ class FakeStore:
     def __init__(self):
         self.facts = []
         self.turns = []
+        self.recall_facts = []   # what recall() returns (set per test)
 
     def add_fact(self, f):
         self.facts.append(f)
@@ -223,10 +224,21 @@ class FakeStore:
         return len(self.turns)
 
     def recall(self, q, *, k=3):
-        return []
+        return self.recall_facts[:k]
 
     def recent(self, *, limit=20):
         return []
+
+
+class RecordingLLM:
+    supports_tools = False
+
+    def __init__(self):
+        self.last_messages = []
+
+    def chat(self, messages, *, stream=True):
+        self.last_messages = list(messages)
+        yield "sure thing"
 
 
 class FakeExtractor:
@@ -288,6 +300,22 @@ def test_extraction_skipped_when_not_idle():
     # acquired the lock, saw it wasn't idle, and bailed before touching Ollama or the store
     assert extractor.calls == 0
     assert store.facts == []
+
+
+# -- Phase 2 step 3: retrieval into the turn context -----------------------
+
+
+def test_recalled_fact_reaches_the_llm_context():
+    orch, _t, store, _e = _build_mem([WAKE, SPEECH, END])
+    store.recall_facts = [Fact(text="the user's sister is named Anya", confidence=0.9,
+                               subject="sister's name")]
+    rec = RecordingLLM()
+    orch.llm = rec
+    asyncio.run(orch.run())
+    # the recalled fact was injected into the messages handed to the LLM
+    assert any(m.role == "system" and "Anya" in m.content for m in rec.last_messages)
+    # and the current user message is still the last thing in the list
+    assert rec.last_messages[-1].role == "user"
 
 
 def test_alert_during_listening_waits_until_after_reply():

@@ -33,6 +33,7 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
+from isha.context import build_messages
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
@@ -83,7 +84,8 @@ class Orchestrator:
         self._llm_lock = asyncio.Lock()
         self._extract_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
-        self._history: list[Message] = [Message("system", system_prompt)] if system_prompt else []
+        self._system_prompt = system_prompt
+        self._history: list[Message] = []  # conversation turns only; persona + facts added per turn
 
     # -- public ------------------------------------------------------------
 
@@ -168,7 +170,15 @@ class Orchestrator:
             print(f'  you: "{text}"')
             self._history.append(Message("user", text))
             appended_user = True
-            reply = await self._think()
+            facts = self.store.recall(text, k=CONFIG.memory.recall_k) if self.store else []
+            if facts:
+                print("  [memory] recalled " + "; ".join(f.subject or f.text[:30] for f in facts))
+            messages = build_messages(
+                self._system_prompt, facts, self._history,
+                recent_limit=CONFIG.memory.recent_turns,
+                char_budget=CONFIG.memory.context_char_budget,
+            )
+            reply = await self._think(messages)
             reply = trim_reflexive_question(reply, keep_rate=CONFIG.reasoning.question_keep_rate)
             self._history.append(Message("assistant", reply))
             await self._speak(reply)
@@ -187,12 +197,12 @@ class Orchestrator:
                 self._enter(ConversationState.IDLE)
             await self._drain_alerts()
 
-    async def _think(self) -> str:
+    async def _think(self, messages: list[Message]) -> str:
         # EchoLLM is instant; a real streaming LLM runs off-thread so the ingest
         # loop stays responsive. The lock guarantees a reply and a background
         # extraction never hit Ollama at the same time.
         def collect() -> str:
-            return "".join(self.llm.chat(self._history, stream=True)).strip()
+            return "".join(self.llm.chat(messages, stream=True)).strip()
 
         async with self._llm_lock:
             return await asyncio.to_thread(collect)
