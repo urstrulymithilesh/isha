@@ -1,0 +1,18 @@
+[project]
+name = "esha"
+version = "0.0.1"
+description = "A fully-local, offline voice AI companion. No cloud, no cost, complete privacy."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"  # 3.13 verified working (all ML wheels present)
+license = { text = "MIT" }
+
+# Runtime deps live in requirements.txt (pinned there for a reproducible local setup).
+# This project is intentionally NOT published to PyPI — it runs from source on the
+# user's own machine. See README for setup.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

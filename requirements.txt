@@ -1,0 +1,46 @@
+# Esha — fully-local voice companion. All deps run offline on-device.
+# Chosen in /plan-eng-review (2026-08-19). Compute split: GPU=reason, CPU=hear+speak+embed.
+#
+# IMPORTANT (Phase 0 landmine): use Python 3.11 or 3.12. Several of these wheels
+# (ctranslate2, onnxruntime) may not exist for 3.13 yet. Run spike.py to confirm.
+
+# --- Memory: SQLite + vector search ---
+# VERIFIED on this machine (Python 3.13.2, SQLite 3.45.3): the stdlib `sqlite3`
+# DOES support enable_load_extension, so sqlite-vec loads into it directly — no
+# pysqlite3 needed. (pysqlite3-binary has no Windows wheel anyway.) If you ever
+# hit a Python build with extension loading disabled, `apsw` is the Windows-safe
+# fallback with loadable-extension support.
+sqlite-vec
+
+# --- STT: faster-whisper on CPU (int8) ---
+# GPU stays dedicated to the LLM; int8 CPU is fast enough for short utterances.
+faster-whisper
+
+# --- Wake word + VAD (ONNX runtime, not tflite — tflite on Windows is painful) ---
+openwakeword
+onnxruntime
+
+# --- Audio I/O (WASAPI capture/playback) + resampling to 16kHz mono ---
+sounddevice
+numpy
+scipy            # resample_poly for 44.1/48kHz -> 16kHz
+
+# --- Embeddings on CPU (NOT a GPU model — must not contend with resident Qwen) ---
+# fastembed uses onnxruntime + a small bge model; no torch required.
+fastembed
+
+# --- TTS: Piper ---
+# Prefer the Piper BINARY release (github.com/rhasspy/piper/releases) over the pip
+# package, which is flaky/unmaintained and pulls an espeak-ng DLL. The binary is
+# invoked as a subprocess; no pip dep required. `piper-tts` left here commented as
+# a fallback only:
+# piper-tts
+
+# --- Reasoning: Ollama ---
+# Ollama runs as its own local server (already installed). We talk to it over HTTP,
+# so no python package is strictly required. Optional thin client:
+# ollama
+
+# --- Dev / test ---
+pytest
+ruff

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Esha runtime data (local, private — never commit)
+*.db
+*.sqlite
+*.sqlite3
+data/
+models/
+*.wav
+*.onnx
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
