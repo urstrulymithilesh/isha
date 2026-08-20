@@ -44,6 +44,10 @@ class Fact:
     text: str
     confidence: float  # 0..1 — the extractor's confidence; low-confidence facts are gated out
     source_turn_id: int | None = None
+    # A short stable key for what this fact is ABOUT (e.g. "sister's name"). Used for
+    # last-write-wins conflict resolution — a new fact with the same subject replaces
+    # the old one. None means dedupe by exact text instead.
+    subject: str | None = None
 
 
 # ---------------------------------------------------------------------------
