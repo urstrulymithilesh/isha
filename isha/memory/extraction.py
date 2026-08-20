@@ -16,7 +16,35 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-from isha.core.interfaces import Fact
+from isha.core.interfaces import LLM, Fact, Message
+
+# Tune this freely — it's the extractor's instruction, isolated like the persona.
+EXTRACTION_PROMPT = """\
+You extract durable facts about the user from a short conversation snippet.
+Output ONLY a JSON array (no prose, no markdown, no code fence) of objects with keys
+"subject", "text", "confidence":
+- subject: a short stable key for what the fact is about (e.g. "sister's name", "job",
+  "coffee preference").
+- text: the fact as a short third-person statement (e.g. "the user's sister is named Anya").
+- confidence: 0.0 to 1.0 — how sure you are this is a real, durable fact the user stated
+  about themselves.
+Only include DURABLE personal facts the USER revealed about THEMSELVES: names, relationships,
+preferences, routines, plans, where they live or work, and the like. Do NOT include chit-chat,
+your own replies, momentary feelings, or anything you guessed but weren't told. If there are
+no such facts, output exactly [].
+"""
+
+
+class FactExtractor:
+    """Turns a conversation snippet into raw extraction JSON via the LLM. Kept separate
+    from parsing so the (network) call and the (pure) parse are testable in isolation."""
+
+    def __init__(self, llm: LLM) -> None:
+        self._llm = llm
+
+    def extract(self, exchange: str) -> str:
+        messages = [Message("system", EXTRACTION_PROMPT), Message("user", exchange)]
+        return "".join(self._llm.chat(messages, stream=False))
 
 
 def _strip_code_fence(raw: str) -> str:

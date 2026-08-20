@@ -151,6 +151,13 @@ class SqliteMemoryStore:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    def all_facts(self) -> list[Fact]:
+        """Every stored fact, oldest first — for inspection/debugging (isha memory)."""
+        rows = self._conn.execute(
+            "SELECT subject, text, confidence, source_turn_id FROM facts ORDER BY id"
+        ).fetchall()
+        return [Fact(text=r[1], confidence=r[2], source_turn_id=r[3], subject=r[0]) for r in rows]
+
     def recent(self, *, limit: int = 20) -> list[Message]:
         rows = self._conn.execute(
             "SELECT role, content FROM turns ORDER BY id DESC LIMIT ?", (limit,)

@@ -105,6 +105,40 @@ def _say_cmd(argv: list[str]) -> int:
     return 0
 
 
+def _memory_cmd(argv: list[str]) -> int:
+    """Inspect what Isha has stored (trust/debug).
+
+        python -m isha memory                 # list every stored fact
+        python -m isha memory "my sister"     # semantic recall for a query
+    """
+    from isha.memory.embedder import FastEmbedEmbedder
+    from isha.memory.store import SqliteMemoryStore
+
+    db = CONFIG.memory.db_path
+    if not db.exists():
+        print(f"No memory yet at {db}.")
+        print("Talk to Isha with `python -m isha run --ollama` first so she can store things.")
+        return 0
+
+    store = SqliteMemoryStore(db, FastEmbedEmbedder())
+    query = " ".join(a for a in argv if not a.startswith("--")).strip()
+    if query:
+        hits = store.recall(query, k=CONFIG.memory.recall_k)
+        print(f"Recall for {query!r} (top {CONFIG.memory.recall_k}):")
+        for f in hits:
+            print(f"  - [{f.subject}] {f.text}  (conf {f.confidence})")
+        if not hits:
+            print("  (nothing relevant found)")
+    else:
+        facts = store.all_facts()
+        print(f"{len(facts)} fact(s) stored in {db}:")
+        for f in facts:
+            print(f"  - [{f.subject}] {f.text}  (conf {f.confidence})")
+    print(f"\nMemory log: {db.parent / 'memory-log.txt'}")
+    store.close()
+    return 0
+
+
 def _run(argv: list[str]) -> int:
     from isha.audio.calibrate import calibrate
     from isha.audio.devices import DeviceError
@@ -169,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
         return _calibrate_cmd(argv[1:])
     if argv and argv[0] == "say":
         return _say_cmd(argv[1:])
+    if argv and argv[0] == "memory":
+        return _memory_cmd(argv[1:])
     if argv and argv[0] == "run":
         return _run(argv[1:])
     return _status()

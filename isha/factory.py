@@ -49,10 +49,22 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         synthesizer = StubSynthesizer()
         voice_label = "STUB (install the Piper binary to swap in real speech)"
 
+    # Memory needs a real brain to extract facts, so it's wired only with Ollama.
+    store = None
+    extractor = None
     if use_ollama:
         from isha.llm.ollama import OllamaLLM
+        from isha.memory.embedder import FastEmbedEmbedder
+        from isha.memory.extraction import FactExtractor
+        from isha.memory.store import SqliteMemoryStore
         llm = OllamaLLM()
         brain_label = f"Ollama/{CONFIG.reasoning.model}"
+        CONFIG.memory.db_path.parent.mkdir(parents=True, exist_ok=True)
+        store = SqliteMemoryStore(
+            CONFIG.memory.db_path, FastEmbedEmbedder(),
+            log_path=CONFIG.memory.db_path.parent / "memory-log.txt",
+        )
+        extractor = FactExtractor(llm)
     else:
         llm = EchoLLM()
         brain_label = "Echo (Phase 0 stub brain)"
@@ -62,6 +74,6 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         transport=transport, wake=wake, stopword=stopword, vad=vad,
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
         system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
-        on_state_change=_print_state,
+        store=store, extractor=extractor, on_state_change=_print_state,
     )
     return orch, voice_label, brain_label

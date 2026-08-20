@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterator
 from isha.core.interfaces import (
     AudioTransport,
     LLM,
+    MemoryStore,
     Message,
     Synthesizer,
     Transcriber,
@@ -35,6 +36,7 @@ from isha.config import CONFIG
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
+from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
 
@@ -52,6 +54,8 @@ class Orchestrator:
         synthesizer: Synthesizer,
         system_prompt: str = "",
         preroll_frames: int = 0,
+        store: MemoryStore | None = None,
+        extractor: FactExtractor | None = None,
         on_state_change: Callable[[ConversationState], None] | None = None,
     ) -> None:
         self.transport = transport
@@ -61,6 +65,8 @@ class Orchestrator:
         self.transcriber = transcriber
         self.llm = llm
         self.synth = synthesizer
+        self.store = store              # None => memory disabled (e.g. Echo brain)
+        self.extractor = extractor      # None => no fact extraction
         self._on_state_change = on_state_change
 
         self.state = ConversationState.IDLE
@@ -71,6 +77,11 @@ class Orchestrator:
         self._preroll: deque[bytes] = deque(maxlen=preroll_frames)
         self._interrupt = asyncio.Event()
         self._turn_task: asyncio.Task[None] | None = None
+        # Overlap gating: ONE lock guards every Ollama call (reply AND extraction), so
+        # they can never hit the model/CPU at the same time. Extraction runs in the idle
+        # gap as a background task and is cancelled the instant a new turn begins.
+        self._llm_lock = asyncio.Lock()
+        self._extract_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
         self._history: list[Message] = [Message("system", system_prompt)] if system_prompt else []
 
@@ -86,6 +97,11 @@ class Orchestrator:
                 break
         if self._turn_task is not None:
             await self._turn_task
+        if self._extract_task is not None and not self._extract_task.done():
+            try:
+                await self._extract_task     # let a final idle-gap extraction finish
+            except asyncio.CancelledError:
+                pass
 
     def notify(self, text: str) -> None:
         """A fired timer/reminder. disposition_for() governs WHEN it's spoken;
@@ -122,6 +138,10 @@ class Orchestrator:
         # THINKING: transient; frames are ignored while the LLM runs.
 
     def _begin_listening(self) -> None:
+        # A new interaction takes priority: cancel any pending idle-gap extraction so it
+        # can't compete with the coming reply. Best-effort — a lost extraction is fine.
+        if self._extract_task is not None and not self._extract_task.done():
+            self._extract_task.cancel()
         # Seed the turn with the pre-roll so the start of the sentence (spoken during
         # the wake word's detection latency) is included. Do NOT flush here — flushing
         # would drop exactly those queued start-of-speech frames.
@@ -152,6 +172,7 @@ class Orchestrator:
             reply = trim_reflexive_question(reply, keep_rate=CONFIG.reasoning.question_keep_rate)
             self._history.append(Message("assistant", reply))
             await self._speak(reply)
+            self._remember_turn(text, reply)
         except Exception as e:  # noqa: BLE001 - a failed turn must never hang "thinking"
             # LLMError, TTS failure, transcription error — surface it, don't stall.
             print(f"  [turn failed] {type(e).__name__}: {e}")
@@ -168,11 +189,44 @@ class Orchestrator:
 
     async def _think(self) -> str:
         # EchoLLM is instant; a real streaming LLM runs off-thread so the ingest
-        # loop stays responsive. (Streaming reply -> streaming TTS is a Phase 1 tie-in.)
+        # loop stays responsive. The lock guarantees a reply and a background
+        # extraction never hit Ollama at the same time.
         def collect() -> str:
             return "".join(self.llm.chat(self._history, stream=True)).strip()
 
-        return await asyncio.to_thread(collect)
+        async with self._llm_lock:
+            return await asyncio.to_thread(collect)
+
+    # -- memory ------------------------------------------------------------
+
+    def _remember_turn(self, user_text: str, reply: str) -> None:
+        """Persist the exchange and kick idle-gap fact extraction (both no-ops if
+        memory isn't wired). Called after a reply is spoken, so we're back at IDLE."""
+        if self.store is None:
+            return
+        self.store.append_turn(Message("user", user_text))
+        self.store.append_turn(Message("assistant", reply))
+        if self.extractor is not None:
+            exchange = f"The user said: {user_text}\nYou replied: {reply}"
+            self._extract_task = asyncio.create_task(self._extract_facts(exchange))
+
+    async def _extract_facts(self, exchange: str) -> None:
+        assert self.store is not None and self.extractor is not None
+        try:
+            async with self._llm_lock:          # never overlaps a live reply on Ollama
+                if self.state is not ConversationState.IDLE:
+                    return                       # a new turn started meanwhile — skip
+                raw = await asyncio.to_thread(self.extractor.extract, exchange)
+            facts = parse_extracted_facts(raw, min_confidence=CONFIG.memory.min_fact_confidence)
+            for fact in facts:
+                self.store.add_fact(fact)        # sync CPU embed; on the loop thread
+            if facts:
+                print("  [memory] stored "
+                      + "; ".join(f.subject or f.text[:30] for f in facts))
+        except asyncio.CancelledError:
+            raise                                # a new turn cancelled us — clean exit
+        except Exception as e:                   # noqa: BLE001 - extraction is best-effort
+            print(f"  [extraction failed] {type(e).__name__}: {e}")
 
     async def _speak(self, text: str) -> None:
         text = clean_for_speech(text)  # single choke-point: everything spoken is voice-shaped

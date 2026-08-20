@@ -207,6 +207,89 @@ def test_brain_failure_does_not_hang_and_speaks_error():
     assert [m for m in orch._history if m.role == "user"] == []
 
 
+# -- Phase 2: idle-gap extraction + overlap gating -------------------------
+
+
+class FakeStore:
+    def __init__(self):
+        self.facts = []
+        self.turns = []
+
+    def add_fact(self, f):
+        self.facts.append(f)
+
+    def append_turn(self, m):
+        self.turns.append(m)
+        return len(self.turns)
+
+    def recall(self, q, *, k=3):
+        return []
+
+    def recent(self, *, limit=20):
+        return []
+
+
+class FakeExtractor:
+    def __init__(self, out="[]"):
+        self.out = out
+        self.calls = 0
+
+    def extract(self, exchange):
+        self.calls += 1
+        return self.out
+
+
+def _build_mem(frames, extractor_out="[]"):
+    transport = FakeTransport(frames)
+    store, extractor = FakeStore(), FakeExtractor(extractor_out)
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=FakeTranscriber(), llm=EchoLLM(), synthesizer=TextSynth(),
+        store=store, extractor=extractor,
+    )
+    return orch, transport, store, extractor
+
+
+def test_extraction_stores_facts_and_persists_turns():
+    out = '[{"subject":"sister","text":"the user\'s sister is named Anya","confidence":0.9}]'
+    orch, _t, store, extractor = _build_mem([WAKE, SPEECH, END], out)
+    asyncio.run(orch.run())
+    assert extractor.calls == 1
+    assert any("Anya" in f.text for f in store.facts)
+    assert [m.role for m in store.turns] == ["user", "assistant"]   # exchange persisted
+
+
+def test_malformed_extraction_stores_nothing_but_still_persists_turns():
+    orch, _t, store, _e = _build_mem([WAKE, SPEECH, END], "this is not json")
+    asyncio.run(orch.run())
+    assert store.facts == []
+    assert len(store.turns) == 2
+
+
+def test_new_turn_cancels_pending_extraction_cleanly():
+    orch, *_ = _build_mem([])
+
+    async def scenario():
+        never = asyncio.Event()
+        orch._extract_task = asyncio.create_task(never.wait())  # pretend extraction in flight
+        await asyncio.sleep(0)
+        orch._begin_listening()                                  # a new turn begins
+        await asyncio.sleep(0)
+        assert orch._extract_task.cancelled()                   # cancelled, no crash
+        assert orch.state is ConversationState.LISTENING        # new turn proceeds
+
+    asyncio.run(scenario())
+
+
+def test_extraction_skipped_when_not_idle():
+    orch, _t, store, extractor = _build_mem([])
+    orch._enter(ConversationState.LISTENING)  # a turn is active
+    asyncio.run(orch._extract_facts("The user said: hi\nYou replied: hey"))
+    # acquired the lock, saw it wasn't idle, and bailed before touching Ollama or the store
+    assert extractor.calls == 0
+    assert store.facts == []
+
+
 def test_alert_during_listening_waits_until_after_reply():
     orch, transport = _build([])
 
