@@ -93,6 +93,31 @@ def _build(frames: list[bytes]) -> tuple[Orchestrator, FakeTransport]:
 # -- full loop --------------------------------------------------------------
 
 
+class RecordingTranscriber:
+    """Captures the exact audio bytes handed to STT so we can assert what was sent."""
+
+    def __init__(self):
+        self.last = b""
+
+    def transcribe(self, pcm: bytes) -> str:
+        self.last = pcm
+        return "hello world"
+
+
+def test_preroll_is_prepended_so_sentence_start_is_not_lost():
+    # Two frames of speech arrive JUST before the wake fires (the detection-latency gap).
+    transport = FakeTransport([b"PRE1", b"PRE2", WAKE, SPEECH, END])
+    rec = RecordingTranscriber()
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=rec, llm=EchoLLM(), synthesizer=TextSynth(),
+        preroll_frames=4,
+    )
+    asyncio.run(orch.run())
+    # the pre-wake audio made it into the captured turn
+    assert b"PRE1" in rec.last and b"PRE2" in rec.last
+
+
 def test_happy_path_full_loop():
     orch, transport = _build([WAKE, SPEECH, END])
     asyncio.run(orch.run())

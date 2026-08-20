@@ -38,13 +38,16 @@ class EnergyVad:
         [no speech yet] --speech--> [in speech] --silence x N--> ENDPOINT
     """
 
-    def __init__(self, *, threshold: float = 500.0, silence_ms: int = 700) -> None:
+    def __init__(self, *, threshold: float = 500.0, silence_ms: int = 1100,
+                 min_speech_ms: int = 300) -> None:
         self._threshold = threshold
         self._silence_needed = ms_to_chunks(silence_ms)
+        self._min_speech_needed = ms_to_chunks(min_speech_ms)
         self.reset()
 
     def reset(self) -> None:
         self._heard_speech = False
+        self._speech_frames = 0
         self._trailing_silence = 0
 
     def set_threshold(self, value: float) -> None:
@@ -71,10 +74,12 @@ class EnergyVad:
     def is_endpoint(self, frame: bytes) -> bool:
         if self.is_speech(frame):
             self._heard_speech = True
+            self._speech_frames += 1
             self._trailing_silence = 0
             return False
-        # silent frame
-        if self._heard_speech:
+        # silent frame — only end after ENOUGH speech AND ENOUGH trailing silence,
+        # so a brief blip can't end a turn and a natural mid-sentence pause is tolerated.
+        if self._heard_speech and self._speech_frames >= self._min_speech_needed:
             self._trailing_silence += 1
             if self._trailing_silence >= self._silence_needed:
                 return True

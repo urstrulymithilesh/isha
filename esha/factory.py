@@ -35,7 +35,11 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
     )
     wake = OpenWakeWordDetector(CONFIG.wake.model)
     stopword = OpenWakeWordDetector(CONFIG.wake.stop_word)
-    vad = EnergyVad(threshold=CONFIG.audio.vad_threshold, silence_ms=CONFIG.audio.vad_silence_ms)
+    vad = EnergyVad(
+        threshold=CONFIG.audio.vad_threshold,
+        silence_ms=CONFIG.audio.vad_silence_ms,
+        min_speech_ms=CONFIG.audio.vad_min_speech_ms,
+    )
     transcriber = WhisperTranscriber()
 
     if PiperSynthesizer.is_available():
@@ -53,9 +57,11 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         llm = EchoLLM()
         brain_label = "Echo (Phase 0 stub brain)"
 
+    from esha.audio.frames import ms_to_chunks
     orch = Orchestrator(
         transport=transport, wake=wake, stopword=stopword, vad=vad,
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
-        system_prompt=SYSTEM_PROMPT, on_state_change=_print_state,
+        system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
+        on_state_change=_print_state,
     )
     return orch, voice_label, brain_label

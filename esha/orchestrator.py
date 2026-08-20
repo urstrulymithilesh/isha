@@ -20,6 +20,7 @@ for Piper (or Echo for Ollama) a factory change, not a rewrite.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable, Iterator
 
 from esha.core.interfaces import (
@@ -31,6 +32,7 @@ from esha.core.interfaces import (
     WakeWord,
 )
 from esha.core.state import ConversationState, disposition_for
+from esha.audio.frames import SAMPLE_RATE
 from esha.audio.vad import Vad
 from esha.tts.speech_text import clean_for_speech
 
@@ -47,6 +49,7 @@ class Orchestrator:
         llm: LLM,
         synthesizer: Synthesizer,
         system_prompt: str = "",
+        preroll_frames: int = 0,
         on_state_change: Callable[[ConversationState], None] | None = None,
     ) -> None:
         self.transport = transport
@@ -61,6 +64,9 @@ class Orchestrator:
         self.state = ConversationState.IDLE
         self.states_visited: list[ConversationState] = [ConversationState.IDLE]
         self._buffer = bytearray()
+        # Rolling recent audio so the wake-word's detection latency doesn't eat the
+        # start of the sentence — prepended to the turn buffer when we start listening.
+        self._preroll: deque[bytes] = deque(maxlen=preroll_frames)
         self._interrupt = asyncio.Event()
         self._turn_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
@@ -95,6 +101,7 @@ class Orchestrator:
             self._on_state_change(state)
 
     async def _handle_frame(self, frame: bytes) -> None:
+        self._preroll.append(frame)  # always keep the most recent audio for pre-roll
         st = self.state
         if st is ConversationState.IDLE:
             if self._alerts:
@@ -113,8 +120,10 @@ class Orchestrator:
         # THINKING: transient; frames are ignored while the LLM runs.
 
     def _begin_listening(self) -> None:
-        self.transport.unmute_input()  # ensure mic open + flushed
-        self._buffer = bytearray()
+        # Seed the turn with the pre-roll so the start of the sentence (spoken during
+        # the wake word's detection latency) is included. Do NOT flush here — flushing
+        # would drop exactly those queued start-of-speech frames.
+        self._buffer = bytearray(b"".join(self._preroll))
         self.vad.reset()
         self._enter(ConversationState.LISTENING)
 
@@ -126,9 +135,12 @@ class Orchestrator:
 
     async def _run_turn(self, audio: bytes) -> None:
         appended_user = False
+        secs = len(audio) / 2 / SAMPLE_RATE  # int16 mono @ 16k
+        print(f"  [captured {secs:.1f}s of audio]")
         try:
             text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
             if not text:
+                print("  [transcript empty — heard no clear speech]")
                 self._enter(ConversationState.IDLE)
                 return
             print(f'  you: "{text}"')

@@ -98,7 +98,8 @@ def _run(argv: list[str]) -> int:
     print(f"   brain : {brain_label}")
     print(f"   voice : {voice_label}")
     print(f"   mic   : {dev_label}  (gain x{orch.transport.gain:.1f})")
-    print(f"   VAD   : speech > {orch.vad.threshold:.0f} RMS, endpoint after {CONFIG.audio.vad_silence_ms}ms silence")
+    print(f"   VAD   : speech > {orch.vad.threshold:.0f} RMS, endpoint after {CONFIG.audio.vad_silence_ms}ms "
+          f"silence (min speech {CONFIG.audio.vad_min_speech_ms}ms), pre-roll {CONFIG.audio.preroll_ms}ms")
     print(f"   wake  : say '{CONFIG.wake.model}'  (stock word until 'Esha' is trained)")
     print("   stop  : say the stop word while she's speaking to cut her off")
     print("   Ctrl-C to quit.")
