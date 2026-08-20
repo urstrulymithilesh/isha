@@ -39,9 +39,9 @@ class SpeechConfig:
     sample_rate: int = 16_000           # pipeline INPUT convention: 16 kHz mono
     # Piper via the piper-tts Python API (no PATH binary). The voice .onnx (+ .json)
     # lives in models/; download with `python -m piper.download_voices <voice> --download-dir models`.
-    # 22050 Hz — playback uses the voice's own rate, input stays 16k. amy-medium
-    # chosen over lessac-medium for a warmer, less newscaster-flat tone.
-    piper_voice: str = "en_US-amy-medium"
+    # 22050 Hz — playback uses the voice's own rate, input stays 16k. libritts_r-medium
+    # (audiobook-trained) chosen for the most natural tone in the catalog.
+    piper_voice: str = "en_US-libritts_r-medium"
 
 
 @dataclass(frozen=True)
