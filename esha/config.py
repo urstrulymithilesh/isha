@@ -26,6 +26,7 @@ class ReasoningConfig:
     model: str = "qwen2.5:3b"
     keep_alive: int = -1                # keep the model resident in VRAM (Ollama: int -1 = forever; "-1" string is rejected)
     num_ctx: int = 4096                 # cap KV/context so Windows-reserved VRAM doesn't OOM the 4GB
+    temperature: float = 0.8            # a touch of personality; lower = flatter/safer
     request_timeout: int = 90           # seconds; CPU generation is slow, but this bounds a hang
 
 

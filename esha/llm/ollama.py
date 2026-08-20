@@ -28,6 +28,7 @@ class OllamaLLM:
         self._model = model or cfg.model
         self._keep_alive = cfg.keep_alive          # int -1
         self._num_ctx = cfg.num_ctx
+        self._temperature = cfg.temperature
         self._timeout = cfg.request_timeout
 
     @property
@@ -46,7 +47,7 @@ class OllamaLLM:
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": stream,
             "keep_alive": self._keep_alive,
-            "options": {"num_ctx": self._num_ctx},
+            "options": {"num_ctx": self._num_ctx, "temperature": self._temperature},
         }).encode()
 
         resp = None
