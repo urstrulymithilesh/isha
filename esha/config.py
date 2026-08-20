@@ -39,6 +39,19 @@ class SpeechConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    # Device INDICES from `python diagnose.py`. None = OS default (often the wrong
+    # one — the built-in mic array, not your headset). Set input_device to your
+    # headset mic's index once diagnose.py confirms the VU meter moves.
+    input_device: int | None = None
+    output_device: int | None = None
+    # RMS level a frame must exceed to count as speech (endpoint detection).
+    # Tune from the live level readout in `python diagnose.py listen <idx>`.
+    vad_threshold: float = 500.0
+    vad_silence_ms: int = 700           # trailing silence that ends a turn
+
+
+@dataclass(frozen=True)
 class WakeConfig:
     # Stock openWakeWord model until the custom "Esha" word is trained in Phase 4.
     model: str = "hey_jarvis"           # placeholder stock word; retrain to "Esha" later
@@ -58,6 +71,7 @@ class MemoryConfig:
 class Config:
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     wake: WakeConfig = field(default_factory=WakeConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
 

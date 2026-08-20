@@ -21,8 +21,9 @@ def _print_state(state: ConversationState) -> None:
     print(f"  [state] -> {state.value}")
 
 
-def build_orchestrator(*, use_ollama: bool = False):
-    """Returns (orchestrator, voice_label). voice_label says which TTS is active."""
+def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = None):
+    """Returns (orchestrator, voice_label, brain_label). input_device overrides
+    CONFIG.audio.input_device (from `run --device N`)."""
     from esha.audio.transport import LocalAudioTransport
     from esha.audio.vad import EnergyVad
     from esha.audio.wakeword import OpenWakeWordDetector
@@ -33,10 +34,11 @@ def build_orchestrator(*, use_ollama: bool = False):
     from esha.tts.piper import PiperSynthesizer
     from esha.tts.stub import StubSynthesizer
 
-    transport = LocalAudioTransport()
+    in_dev = input_device if input_device is not None else CONFIG.audio.input_device
+    transport = LocalAudioTransport(input_device=in_dev, output_device=CONFIG.audio.output_device)
     wake = OpenWakeWordDetector(CONFIG.wake.model)
     stopword = OpenWakeWordDetector(CONFIG.wake.stop_word)
-    vad = EnergyVad()
+    vad = EnergyVad(threshold=CONFIG.audio.vad_threshold, silence_ms=CONFIG.audio.vad_silence_ms)
     transcriber = WhisperTranscriber()
 
     if PiperSynthesizer.is_available():

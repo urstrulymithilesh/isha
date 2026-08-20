@@ -27,14 +27,31 @@ def _status() -> int:
     return 0
 
 
-def _run(use_ollama: bool) -> int:
+def _device_arg(argv: list[str]) -> int | None:
+    if "--device" in argv:
+        i = argv.index("--device")
+        if i + 1 < len(argv):
+            return int(argv[i + 1])
+    return None
+
+
+def _run(argv: list[str]) -> int:
     from esha.factory import build_orchestrator
 
-    orch, voice_label, brain_label = build_orchestrator(use_ollama=use_ollama)
+    device = _device_arg(argv)
+    orch, voice_label, brain_label = build_orchestrator(
+        use_ollama="--ollama" in argv, input_device=device,
+    )
+    dev_label = f"index {device}" if device is not None else (
+        f"index {CONFIG.audio.input_device}" if CONFIG.audio.input_device is not None
+        else "OS default (run `python diagnose.py` to pick your headset)"
+    )
     print("=" * 60)
     print(" Esha — walking skeleton (Phase 0)")
     print(f"   brain : {brain_label}")
     print(f"   voice : {voice_label}")
+    print(f"   mic   : {dev_label}")
+    print(f"   VAD   : speech > {CONFIG.audio.vad_threshold:.0f} RMS, endpoint after {CONFIG.audio.vad_silence_ms}ms silence")
     print(f"   wake  : say '{CONFIG.wake.model}'  (stock word until 'Esha' is trained)")
     print("   stop  : say the stop word while she's speaking to cut her off")
     print("   Ctrl-C to quit.")
@@ -51,8 +68,12 @@ def main(argv: list[str] | None = None) -> int:
     if "--spike" in argv:
         import spike
         return spike.main()
+    if argv and argv[0] in ("devices", "--list-devices"):
+        import diagnose
+        diagnose.list_devices()
+        return 0
     if argv and argv[0] == "run":
-        return _run(use_ollama="--ollama" in argv)
+        return _run(argv[1:])
     return _status()
 
 

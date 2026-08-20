@@ -30,7 +30,9 @@ class OpenWakeWordDetector:
         except ImportError as e:  # pragma: no cover - environment guard
             raise RuntimeError("openwakeword not installed (pip install openwakeword)") from e
         try:
-            self._model = Model(wakeword_models=[self._model_name])
+            # Pin onnx: the tflite runtime isn't installed on Windows, and letting
+            # openWakeWord discover that at load time emits a noisy fallback warning.
+            self._model = Model(wakeword_models=[self._model_name], inference_framework="onnx")
         except Exception as e:  # noqa: BLE001 - surface a clear setup hint
             raise RuntimeError(
                 f"could not load wake model {self._model_name!r}. First-time setup may need:\n"

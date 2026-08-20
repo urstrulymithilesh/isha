@@ -1,0 +1,153 @@
+"""Esha audio diagnostics — find where the wake->STT chain breaks.
+
+Two commands:
+
+    python diagnose.py                 # list every audio device (find your headset mic)
+    python diagnose.py listen          # live monitor on the DEFAULT input device
+    python diagnose.py listen 5        # live monitor on device index 5
+    python diagnose.py listen 5 --threshold 400
+
+The live monitor shows, per 80ms frame, all in one line:
+  * a VU meter of the mic level (RMS)   -> is audio arriving at all?
+  * which device it opened               -> is it your headset or the built-in mic?
+  * the live 'hey_jarvis' wake score     -> is openWakeWord hearing you, just under threshold?
+  * [SPEECH] when level clears the VAD threshold, and <<< WAKE when the word fires
+
+If the VU meter stays flat while you talk, it's the wrong device -> pick the right
+index and pass it to `python -m esha run --device N`.
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import sys
+
+import numpy as np
+import sounddevice as sd
+
+from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
+
+WAKE_THRESHOLD = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Command 1: list devices
+# ---------------------------------------------------------------------------
+
+
+def list_devices() -> None:
+    hostapis = sd.query_hostapis()
+    try:
+        default_in, default_out = sd.default.device
+    except Exception:
+        default_in = default_out = -1
+
+    print("=" * 78)
+    print(" AUDIO DEVICES  (look for your headset mic; note its index)")
+    print("=" * 78)
+    print(f" {'idx':>3}  {'in':>2} {'out':>3}  {'host API':<12} name")
+    print(" " + "-" * 74)
+    for i, d in enumerate(sd.query_devices()):
+        host = hostapis[d["hostapi"]]["name"]
+        marks = []
+        if i == default_in:
+            marks.append("DEFAULT-IN")
+        if i == default_out:
+            marks.append("DEFAULT-OUT")
+        mark = ("  <- " + ", ".join(marks)) if marks else ""
+        print(f" {i:>3}  {d['max_input_channels']:>2} {d['max_output_channels']:>3}"
+              f"  {host:<12} {d['name']}{mark}")
+    print(" " + "-" * 74)
+    print(" Tip: prefer a 'Windows WASAPI' input for your headset. Then run:")
+    print("      python diagnose.py listen <idx>")
+
+
+# ---------------------------------------------------------------------------
+# Command 2: live monitor
+# ---------------------------------------------------------------------------
+
+
+def _wake_model_info() -> object:
+    import openwakeword
+    from openwakeword.model import Model
+
+    res_dir = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
+    onnx = os.path.join(res_dir, "hey_jarvis_v0.1.onnx")
+    print(f"  wake model : hey_jarvis")
+    print(f"  model file : {onnx}")
+    print(f"  file found : {os.path.isfile(onnx)}")
+    # inference_framework pinned to onnx (tflite runtime isn't installed on Windows)
+    model = Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
+    return model
+
+
+def _vu(rms: float, width: int = 40, full_scale: float = 3000.0) -> str:
+    n = min(width, int(width * rms / full_scale))
+    return "#" * n + "-" * (width - n)
+
+
+def listen(device: int | None, threshold: float) -> None:
+    print("=" * 78)
+    print(" LIVE MONITOR — talk into your mic; Ctrl-C to stop")
+    print("=" * 78)
+
+    dev_info = sd.query_devices(device, "input") if device is not None else sd.query_devices(kind="input")
+    print(f"  device     : [{device if device is not None else 'default'}] {dev_info['name']}")
+    print(f"  samplerate : {SAMPLE_RATE} Hz, frame {CHUNK_SAMPLES} samples ({CHUNK_SAMPLES*1000//SAMPLE_RATE} ms)")
+    print(f"  VAD thresh : {threshold:.0f} RMS  (level must exceed this to count as speech)")
+
+    model = _wake_model_info()
+    print("  " + "-" * 74)
+    print("  Say 'hey jarvis'. Watch the wake score spike toward 1.0.\n")
+
+    peak_rms = 0.0
+    peak_score = 0.0
+    with sd.InputStream(samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES,
+                        channels=1, dtype="int16", device=device) as stream:
+        while True:
+            data, overflowed = stream.read(CHUNK_SAMPLES)
+            samples = np.asarray(data, dtype=np.int16).reshape(-1)
+            rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2))) if samples.size else 0.0
+            scores = model.predict(samples)
+            score = float(scores.get("hey_jarvis", 0.0))
+            peak_rms = max(peak_rms, rms)
+            peak_score = max(peak_score, score)
+
+            speech = "SPEECH" if rms >= threshold else "  ..  "
+            wake = "  <<< WAKE!" if score >= WAKE_THRESHOLD else ""
+            over = " OVERFLOW" if overflowed else ""
+            print(f"\r level {rms:6.0f} |{_vu(rms)}| {speech}  wake={score:0.3f}"
+                  f"  (peak lvl {peak_rms:5.0f}, peak wake {peak_score:0.3f}){wake}{over}",
+                  end="", flush=True)
+
+
+def _parse_listen_args(args: list[str]) -> tuple[int | None, float]:
+    device: int | None = None
+    threshold = 500.0
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--threshold":
+            threshold = float(args[i + 1]); i += 2; continue
+        if a.lstrip("-").isdigit():
+            device = int(a)
+        i += 1
+    return device, threshold
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args and args[0] == "listen":
+        device, threshold = _parse_listen_args(args[1:])
+        try:
+            listen(device, threshold)
+        except KeyboardInterrupt:
+            print("\n\nStopped.")
+        return 0
+    list_devices()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
