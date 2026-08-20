@@ -64,6 +64,47 @@ def _calibrate_cmd(argv: list[str]) -> int:
     return 0
 
 
+def _say_cmd(argv: list[str]) -> int:
+    """Synthesize text to a wav with a chosen voice — for A/B-ing voices offline.
+
+        python -m esha say "hello there" --voice en_US-amy-medium
+    """
+    import wave
+
+    from esha.tts.piper import PiperSynthesizer, _voice_model_path
+
+    voice = _flag_value(argv, "--voice") or CONFIG.speech.piper_voice
+    words, skip = [], False
+    for a in argv:
+        if a == "--voice":
+            skip = True
+            continue
+        if skip:
+            skip = False
+            continue
+        words.append(a)
+    text = " ".join(words) or "Hey you, good to hear your voice. What's going on today?"
+
+    if not _voice_model_path(voice).is_file():
+        print(f"Voice '{voice}' isn't downloaded yet. Get it with:")
+        print(f"  python -m piper.download_voices {voice} --download-dir models")
+        return 1
+
+    synth = PiperSynthesizer(voice=voice)
+    pcm = bytearray()
+    for chunk in synth.synthesize(text):
+        pcm.extend(chunk)
+    out = f"say_{voice}.wav"
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(synth.sample_rate)
+        w.writeframes(bytes(pcm))
+    print(f"Wrote {out} ({len(pcm)/2/synth.sample_rate:.1f}s @ {synth.sample_rate}Hz)")
+    print(f"Play it:  Start-Process .\\{out}")
+    return 0
+
+
 def _run(argv: list[str]) -> int:
     from esha.audio.calibrate import calibrate
     from esha.audio.devices import DeviceError
@@ -126,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if argv and argv[0] == "calibrate":
         return _calibrate_cmd(argv[1:])
+    if argv and argv[0] == "say":
+        return _say_cmd(argv[1:])
     if argv and argv[0] == "run":
         return _run(argv[1:])
     return _status()
