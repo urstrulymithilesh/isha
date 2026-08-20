@@ -16,7 +16,7 @@ from esha.config import CONFIG
 
 
 def _status() -> int:
-    print(f"Esha v{__version__} — fully-local voice companion")
+    print(f"Isha v{__version__} — fully-local voice companion")
     print(f"  reasoning : {CONFIG.reasoning.model} via {CONFIG.reasoning.ollama_host}")
     print(f"  stt       : faster-whisper {CONFIG.speech.whisper_model} ({CONFIG.speech.whisper_compute_type}, CPU)")
     print(f"  wake/stop : {CONFIG.wake.model} / {CONFIG.wake.stop_word}")
@@ -135,13 +135,13 @@ def _run(argv: list[str]) -> int:
         "OS default (run `python diagnose.py` to pick your mic)"
     )
     print("=" * 60)
-    print(" Esha — walking skeleton (Phase 0)")
+    print(" Isha — walking skeleton (Phase 0)")
     print(f"   brain : {brain_label}")
     print(f"   voice : {voice_label}")
     print(f"   mic   : {dev_label}  (gain x{orch.transport.gain:.1f})")
     print(f"   VAD   : speech > {orch.vad.threshold:.0f} RMS, endpoint after {CONFIG.audio.vad_silence_ms}ms "
           f"silence (min speech {CONFIG.audio.vad_min_speech_ms}ms), pre-roll {CONFIG.audio.preroll_ms}ms")
-    print(f"   wake  : say '{CONFIG.wake.model}'  (stock word until 'Esha' is trained)")
+    print(f"   wake  : say 'hey jarvis'  (PLACEHOLDER wake word — a custom 'Isha' word is Phase 4)")
     print("   stop  : say the stop word while she's speaking to cut her off")
     print("   Ctrl-C to quit.")
     print("=" * 60)

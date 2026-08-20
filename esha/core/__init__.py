@@ -1,4 +1,4 @@
-"""Esha core: capability contracts and the preemption state machine."""
+"""Isha core: capability contracts and the preemption state machine."""
 
 from esha.core.state import (
     AlertDisposition,

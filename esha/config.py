@@ -58,9 +58,9 @@ class AudioConfig:
     # RMS level (POST-gain) a frame must exceed to count as speech. 500 was too high
     # for laptop mics; auto-calibration sets a real value from your room + voice.
     vad_threshold: float = 150.0
-    vad_silence_ms: int = 850           # trailing silence that ends a turn. Single-number
+    vad_silence_ms: int = 950           # trailing silence that ends a turn. Single-number
                                         # trade-off: 700 cut people off mid-sentence, 1100 felt
-                                        # laggy after finishing; 850 is the middle. Tune by feel.
+                                        # laggy after finishing; ~950 is the middle. Tune by feel.
     vad_min_speech_ms: int = 300        # need this much speech before a silence can end a turn
     preroll_ms: int = 500               # audio kept BEFORE the wake fires, prepended to the
                                         # turn so the start of your sentence isn't lost
@@ -70,8 +70,8 @@ class AudioConfig:
 
 @dataclass(frozen=True)
 class WakeConfig:
-    # Stock openWakeWord model until the custom "Esha" word is trained in Phase 4.
-    model: str = "hey_jarvis"           # placeholder stock word; retrain to "Esha" later
+    # Stock openWakeWord model until the custom "Isha" word is trained in Phase 4.
+    model: str = "hey_jarvis"           # placeholder stock word; retrain to "Isha" later
     stop_word: str = "hey_jarvis"       # kept live during SPEAKING to allow barge-in
 
 

@@ -4,7 +4,7 @@ It satisfies the SAME `Synthesizer` contract as the real Piper impl (text in,
 streaming PCM frames out), so swapping to Piper later is a one-line factory change
 — NOT a rewrite. This is the whole point of coding to the interface.
 
-What it does: prints what Esha "would say" so you can read the conversation, and
+What it does: prints what Isha "would say" so you can read the conversation, and
 emits a short, quiet tone whose length is proportional to the text. The tone is
 real audio in the pipeline's format, so the interruptible-playback path (stop-word
 barge-in) is exercised for real — the stub streams multiple frames, and a stop-word
@@ -30,7 +30,7 @@ class StubSynthesizer:
         return SAMPLE_RATE
 
     def synthesize(self, text: str) -> Iterator[bytes]:
-        print(f'  Esha (stub voice): "{text}"')
+        print(f'  Isha (stub voice): "{text}"')
         total_ms = max(self._min_ms, len(text) * self._ms_per_char)
         n_chunks = ms_to_chunks(total_ms)
         phase = 0.0

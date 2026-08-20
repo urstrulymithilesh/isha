@@ -1,6 +1,6 @@
 """Voice-shape tests for clean_for_speech.
 
-These check PACING and FORMAT only — that whatever Esha says comes out as a natural
+These check PACING and FORMAT only — that whatever Isha says comes out as a natural
 spoken line, not a wall of text or a bulleted list. They deliberately do NOT assert
 any particular wording, so the persona stays free to say what it wants.
 """

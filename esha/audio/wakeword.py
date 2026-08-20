@@ -1,11 +1,11 @@
 """OpenWakeWordDetector — the v1 WakeWord impl.
 
-Stays live even during Esha's speech so a stop-word can barge in (Finding #3 of
+Stays live even during Isha's speech so a stop-word can barge in (Finding #3 of
 the eng review). A headset prevents self-trigger. The same class serves both the
 wake role (IDLE) and the stop role (SPEAKING); config decides which model each uses.
 
 First run downloads the pretrained melspectrogram + embedding models (one-time,
-online); after that it is fully offline. Until the custom "Esha" word is trained
+online); after that it is fully offline. Until the custom "Isha" word is trained
 in Phase 4, use a stock word (e.g. "hey_jarvis").
 """
 

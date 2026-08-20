@@ -104,7 +104,7 @@ def calibrate(device: int | None, *, ambient_s: float = 1.5, speech_s: float = 3
 
     result: Calibration | None = None
     for attempt in range(1, max_attempts + 1):
-        _countdown("Say a full sentence (e.g. 'hey Esha, how are you today')")
+        _countdown("Say a full sentence (e.g. 'good morning, how are you doing today')")
         speech = _measure_rms(device, speech_s, warmup_s=0.1, live=True)
         speech_rms = float(np.percentile(speech, 75)) if speech else 0.0
         result = recommend_audio_settings(noise_rms, speech_rms)

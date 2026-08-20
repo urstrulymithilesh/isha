@@ -22,7 +22,7 @@ def test_alert_while_idle_speaks_now():
 
 
 def test_alert_while_speaking_speaks_now():
-    # Esha already owns the speaker; a fired timer can interject immediately.
+    # Isha already owns the speaker; a fired timer can interject immediately.
     assert disposition_for(ConversationState.SPEAKING) is AlertDisposition.SPEAK_NOW
 
 

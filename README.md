@@ -1,4 +1,4 @@
-# Esha
+# Isha
 
 A **fully-local, offline voice AI companion**. No cloud APIs, no cloud costs, no
 data ever leaves the machine. Say a wake word, talk to her, and she replies in
@@ -75,7 +75,7 @@ Everything runs on-device and offline. Runtime data (`data/`, `*.db`, `*.wav`,
 
 ## License note (TTS is GPL-3.0)
 
-Esha's own code is MIT (see `pyproject.toml`). The TTS engine, **piper-tts**
+Isha's own code is MIT (see `pyproject.toml`). The TTS engine, **piper-tts**
 (OHF-Voice/piper1-gpl), is **GPL-3.0** — the old MIT `rhasspy/piper` is archived.
 
 What that means in practice for this repo:

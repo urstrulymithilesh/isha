@@ -1,4 +1,4 @@
-"""The preemption state machine — Esha's signature concurrency model.
+"""The preemption state machine — Isha's signature concurrency model.
 
 This is the hardest and most interview-worthy part of the project, so it lives in
 its own module and is specified explicitly rather than implied by the event loop.
@@ -11,7 +11,7 @@ its own module and is specified explicitly rather than implied by the event loop
                                                     (Piper + stop-word detector live)
 
 PendingAlert (a fired timer/reminder) is a priority overlay on ANY state:
-  • fires while IDLE or SPEAKING  -> speak immediately (Esha owns the speaker)
+  • fires while IDLE or SPEAKING  -> speak immediately (Isha owns the speaker)
   • fires while LISTENING         -> WAIT for the VAD endpoint, then speak
                                      (don't cut the user off mid-word; a
                                       timer/reminder counts as time-critical, so
@@ -19,7 +19,7 @@ PendingAlert (a fired timer/reminder) is a priority overlay on ANY state:
   • fires while THINKING          -> queue, speak right after the reply
 
 Half-duplex invariant: entering SPEAKING mutes full STT; exiting SPEAKING unmutes
-AND flushes the mic buffer, so Esha never hears the tail of her own voice.
+AND flushes the mic buffer, so Isha never hears the tail of her own voice.
 """
 
 from __future__ import annotations

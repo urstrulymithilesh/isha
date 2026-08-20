@@ -1,4 +1,4 @@
-"""Core capability contracts for Esha.
+"""Core capability contracts for Isha.
 
 Design rule (locked in /plan-eng-review): every interface is defined by a MINIMAL
 capability contract, never a vendor's wire format. That is what makes the
@@ -39,7 +39,7 @@ class Message:
 
 @dataclass(frozen=True)
 class Fact:
-    """A durable thing Esha has learned about the user."""
+    """A durable thing Isha has learned about the user."""
 
     text: str
     confidence: float  # 0..1 — the extractor's confidence; low-confidence facts are gated out
@@ -80,7 +80,7 @@ class AudioTransport(Protocol):
 
 @runtime_checkable
 class WakeWord(Protocol):
-    """Always-on, lightweight. Stays live even during Esha's own speech so a
+    """Always-on, lightweight. Stays live even during Isha's own speech so a
     stop-word can barge in (headset prevents self-trigger)."""
 
     def process(self, frame: bytes) -> bool:
@@ -173,7 +173,7 @@ class MemoryStore(Protocol):
 
 @runtime_checkable
 class Tool(Protocol):
-    """A single capability Esha can invoke (timer, reminder, note, ...)."""
+    """A single capability Isha can invoke (timer, reminder, note, ...)."""
 
     name: str
     description: str

@@ -1,9 +1,9 @@
-"""The orchestrator — Esha's always-on event loop and preemption state machine.
+"""The orchestrator — Isha's always-on event loop and preemption state machine.
 
 This is the signature engineering of the project (the reason we chose a custom
 asyncio loop over a framework): the mic is consumed by ONE ingest loop, and a turn
 (transcribe -> think -> speak) runs as a concurrent task so the ingest loop keeps
-running DURING speech. That is what lets a stop-word barge in while Esha is talking.
+running DURING speech. That is what lets a stop-word barge in while Isha is talking.
 
     ┌──── wake ────► LISTENING ──── endpoint ────► THINKING ──── reply ────┐
    IDLE                (buffer STT)                 (LLM)                    │

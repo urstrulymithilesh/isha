@@ -1,4 +1,4 @@
-"""Esha Phase 0 spike — hardware + plumbing, in one sitting.
+"""Isha Phase 0 spike — hardware + plumbing, in one sitting.
 
 Answers two questions from the design doc's Assignment:
   1. HARDWARE: is the wake -> STT -> LLM -> TTS round-trip in the ~2-5s range?
@@ -200,7 +200,7 @@ def check_ollama() -> None:
 def main() -> int:
     wav = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     print("=" * 68)
-    print(" Esha Phase 0 spike — hardware + plumbing")
+    print(" Isha Phase 0 spike — hardware + plumbing")
     print("=" * 68)
 
     probe("Python")(check_python)

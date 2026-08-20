@@ -1,4 +1,4 @@
-"""Esha audio diagnostics — find where the wake->STT chain breaks.
+"""Isha audio diagnostics — find where the wake->STT chain breaks.
 
 Two commands:
 

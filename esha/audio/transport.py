@@ -5,7 +5,7 @@ rejected VoIP idea would slot back in as a drop-in adapter (same PCM frames in
 and out); nothing else in the pipeline would change.
 
 Half-duplex invariant lives here: `mute_input()` stops STT-bound frames flowing
-while Esha speaks; `unmute_input()` re-opens AND flushes the queue so she never
+while Isha speaks; `unmute_input()` re-opens AND flushes the queue so she never
 transcribes the tail of her own voice (self-trigger echo).
 """
 
@@ -93,7 +93,7 @@ class LocalAudioTransport:
 
     def unmute_input(self) -> None:
         self._muted = False
-        # Flush anything captured while muted (Esha's own voice tail).
+        # Flush anything captured while muted (Isha's own voice tail).
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
