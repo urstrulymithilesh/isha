@@ -31,9 +31,11 @@ from isha.core.interfaces import (
     Transcriber,
     WakeWord,
 )
+from isha.config import CONFIG
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
+from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
 
 
@@ -147,6 +149,7 @@ class Orchestrator:
             self._history.append(Message("user", text))
             appended_user = True
             reply = await self._think()
+            reply = trim_reflexive_question(reply, keep_rate=CONFIG.reasoning.question_keep_rate)
             self._history.append(Message("assistant", reply))
             await self._speak(reply)
         except Exception as e:  # noqa: BLE001 - a failed turn must never hang "thinking"
