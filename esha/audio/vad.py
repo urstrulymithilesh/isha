@@ -47,6 +47,14 @@ class EnergyVad:
         self._heard_speech = False
         self._trailing_silence = 0
 
+    def set_threshold(self, value: float) -> None:
+        """Update the speech/silence RMS boundary (used by auto-calibration)."""
+        self._threshold = float(value)
+
+    @property
+    def threshold(self) -> float:
+        return self._threshold
+
     @staticmethod
     def _rms(frame: bytes) -> float:
         if not frame:

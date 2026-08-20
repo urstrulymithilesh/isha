@@ -45,10 +45,16 @@ class AudioConfig:
     # headset mic's index once diagnose.py confirms the VU meter moves.
     input_device: int | None = None
     output_device: int | None = None
-    # RMS level a frame must exceed to count as speech (endpoint detection).
-    # Tune from the live level readout in `python diagnose.py listen <idx>`.
-    vad_threshold: float = 500.0
+    # Software capture gain — boosts quiet laptop mics so speech is loud enough for
+    # both VAD and STT, without touching Windows mic settings. 1.0 = off.
+    # Auto-calibration overrides this at startup unless auto_calibrate is False.
+    capture_gain: float = 1.0
+    # RMS level (POST-gain) a frame must exceed to count as speech. 500 was too high
+    # for laptop mics; auto-calibration sets a real value from your room + voice.
+    vad_threshold: float = 150.0
     vad_silence_ms: int = 700           # trailing silence that ends a turn
+    # Measure room + a test phrase on `esha run` startup and set gain + threshold.
+    auto_calibrate: bool = True
 
 
 @dataclass(frozen=True)

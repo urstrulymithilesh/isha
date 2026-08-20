@@ -22,9 +22,13 @@ from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
 
 
 class LocalAudioTransport:
-    def __init__(self, *, input_device: int | None = None, output_device: int | None = None) -> None:
+    def __init__(
+        self, *, input_device: int | None = None, output_device: int | None = None,
+        gain: float = 1.0,
+    ) -> None:
         self._input_device = input_device
         self._output_device = output_device
+        self.gain = gain  # software capture gain; boosts quiet mics for VAD + STT
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._muted = False
@@ -59,6 +63,10 @@ class LocalAudioTransport:
                 yield await self._queue.get()
 
     def _offer(self, pcm: bytes) -> None:
+        if self.gain != 1.0:
+            arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) * self.gain
+            np.clip(arr, -32768, 32767, out=arr)
+            pcm = arr.astype(np.int16).tobytes()
         try:
             self._queue.put_nowait(pcm)
         except asyncio.QueueFull:

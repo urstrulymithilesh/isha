@@ -35,7 +35,10 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
     from esha.tts.stub import StubSynthesizer
 
     in_dev = input_device if input_device is not None else CONFIG.audio.input_device
-    transport = LocalAudioTransport(input_device=in_dev, output_device=CONFIG.audio.output_device)
+    transport = LocalAudioTransport(
+        input_device=in_dev, output_device=CONFIG.audio.output_device,
+        gain=CONFIG.audio.capture_gain,
+    )
     wake = OpenWakeWordDetector(CONFIG.wake.model)
     stopword = OpenWakeWordDetector(CONFIG.wake.stop_word)
     vad = EnergyVad(threshold=CONFIG.audio.vad_threshold, silence_ms=CONFIG.audio.vad_silence_ms)

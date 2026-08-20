@@ -74,7 +74,7 @@ def _vu(rms: float, width: int = 40, full_scale: float = 3000.0) -> str:
     return "#" * n + "-" * (width - n)
 
 
-def listen(device: int | None, threshold: float) -> None:
+def listen(device: int | None, threshold: float, gain: float = 1.0) -> None:
     from esha.audio.devices import DeviceError, format_device_table, validate_input_device
 
     print("=" * 78)
@@ -90,6 +90,7 @@ def listen(device: int | None, threshold: float) -> None:
     dev_info = sd.query_devices(device, "input") if device is not None else sd.query_devices(kind="input")
     print(f"  device     : [{device if device is not None else 'default'}] {dev_info['name']}")
     print(f"  samplerate : {SAMPLE_RATE} Hz, frame {CHUNK_SAMPLES} samples ({CHUNK_SAMPLES*1000//SAMPLE_RATE} ms)")
+    print(f"  capture gain: x{gain:.1f}  (levels + wake below are POST-gain, as the loop sees them)")
     print(f"  VAD thresh : {threshold:.0f} RMS  (level must exceed this to count as speech)")
 
     model = _wake_model_info()
@@ -110,6 +111,9 @@ def listen(device: int | None, threshold: float) -> None:
         while True:
             data, overflowed = stream.read(CHUNK_SAMPLES)
             samples = np.asarray(data, dtype=np.int16).reshape(-1)
+            if gain != 1.0 and samples.size:
+                boosted = np.clip(samples.astype(np.float32) * gain, -32768, 32767)
+                samples = boosted.astype(np.int16)
             rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2))) if samples.size else 0.0
             scores = model.predict(samples)
             score = float(scores.get("hey_jarvis", 0.0))
@@ -124,28 +128,54 @@ def listen(device: int | None, threshold: float) -> None:
                   end="", flush=True)
 
 
-def _parse_listen_args(args: list[str]) -> tuple[int | None, float]:
+def _parse_listen_args(args: list[str]) -> tuple[int | None, float, float]:
+    from esha.config import CONFIG
+
     device: int | None = None
-    threshold = 500.0
+    threshold = CONFIG.audio.vad_threshold
+    gain = CONFIG.audio.capture_gain
     i = 0
     while i < len(args):
         a = args[i]
         if a == "--threshold":
             threshold = float(args[i + 1]); i += 2; continue
+        if a == "--gain":
+            gain = float(args[i + 1]); i += 2; continue
         if a.lstrip("-").isdigit():
             device = int(a)
         i += 1
-    return device, threshold
+    return device, threshold, gain
+
+
+def _calibrate(args: list[str]) -> None:
+    from esha.audio.calibrate import calibrate
+    from esha.audio.devices import DeviceError, validate_input_device
+
+    device = int(args[0]) if args and args[0].lstrip("-").isdigit() else None
+    try:
+        validate_input_device(device)
+        result = calibrate(device)
+    except DeviceError as e:
+        print(f"\n{e}")
+        return
+    print(f"\n  Confirm it works together:  python diagnose.py listen "
+          f"{device if device is not None else ''} --gain {result.gain} --threshold {result.threshold}")
+    print("  Make permanent in esha/config.py -> AudioConfig:")
+    print(f"      capture_gain: float = {result.gain}")
+    print(f"      vad_threshold: float = {result.threshold}")
 
 
 def main() -> int:
     args = sys.argv[1:]
     if args and args[0] == "listen":
-        device, threshold = _parse_listen_args(args[1:])
+        device, threshold, gain = _parse_listen_args(args[1:])
         try:
-            listen(device, threshold)
+            listen(device, threshold, gain)
         except KeyboardInterrupt:
             print("\n\nStopped.")
+        return 0
+    if args and args[0] == "calibrate":
+        _calibrate(args[1:])
         return 0
     if args and args[0] == "inputs":
         list_devices(inputs_only=True)
