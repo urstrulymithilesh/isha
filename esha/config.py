@@ -17,11 +17,13 @@ MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 class ReasoningConfig:
     # GPU = reason. Qwen pinned resident so first-token latency stays low.
     ollama_host: str = "http://localhost:11434"
-    # llama3.2 (3B) is already local and is the design's documented A/B baseline, so
-    # v1 starts here for zero-download momentum. The doc's PRIMARY pick is qwen2.5:3b
-    # (stronger tool-calling) — `ollama pull qwen2.5:3b`, then set model="qwen2.5:3b"
-    # and A/B them with the persona eval (T6). Swap to 7B/14B after a GPU upgrade.
-    model: str = "llama3.2"
+    # qwen2.5:3b is the design doc's PRIMARY pick (stronger instruction-following +
+    # tool-calling) and ~1.9GB Q4 fits the 4GB GPU by size. NOTE: as of this machine's
+    # Ollama build it still runs ~12 tok/s on CPU (both qwen2.5:3b and llama3.2) because
+    # Ollama's Vulkan GPU discovery watchdog times out ("context deadline exceeded") and
+    # falls back to CPU — see server.log. GPU enablement is a separate task; ~12 tok/s
+    # CPU is usable for turn-based voice. llama3.2 stays the A/B baseline (persona eval T6).
+    model: str = "qwen2.5:3b"
     keep_alive: int = -1                # keep the model resident in VRAM (Ollama: int -1 = forever; "-1" string is rejected)
     num_ctx: int = 4096                 # cap KV/context so Windows-reserved VRAM doesn't OOM the 4GB
     request_timeout: int = 90           # seconds; CPU generation is slow, but this bounds a hang
