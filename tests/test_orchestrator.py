@@ -152,6 +152,25 @@ class BrokenLLM:
         raise LLMError("simulated Ollama 500")
 
 
+class MarkdownLLM:
+    """Simulates a 3B model slipping into a bulleted, markdown reply."""
+
+    supports_tools = False
+
+    def chat(self, messages, *, stream=True):
+        yield "Here's the plan:\n- first thing\n- second thing\n**all set**"
+
+
+def test_reply_is_cleaned_for_speech_before_playback():
+    orch, transport = _build([WAKE, SPEECH, END])
+    orch.llm = MarkdownLLM()
+    asyncio.run(orch.run())
+    spoken = transport.spoken[-1]
+    assert "\n" not in spoken and "*" not in spoken   # voice-shaped, not markdown
+    assert not spoken.split()[0].startswith("-")
+    assert "first thing" in spoken and "all set" in spoken
+
+
 def test_brain_failure_does_not_hang_and_speaks_error():
     orch, transport = _build([WAKE, SPEECH, END])
     orch.llm = BrokenLLM()

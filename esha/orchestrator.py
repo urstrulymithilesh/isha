@@ -32,6 +32,7 @@ from esha.core.interfaces import (
 )
 from esha.core.state import ConversationState, disposition_for
 from esha.audio.vad import Vad
+from esha.tts.speech_text import clean_for_speech
 
 
 class Orchestrator:
@@ -159,6 +160,10 @@ class Orchestrator:
         return await asyncio.to_thread(collect)
 
     async def _speak(self, text: str) -> None:
+        text = clean_for_speech(text)  # single choke-point: everything spoken is voice-shaped
+        if not text:
+            self._enter(ConversationState.IDLE)
+            return
         self._enter(ConversationState.SPEAKING)
         self._interrupt.clear()
         self.transport.mute_input()

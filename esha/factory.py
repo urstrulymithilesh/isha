@@ -8,13 +8,7 @@ of coding to the contracts in esha/core/interfaces.py.
 from __future__ import annotations
 
 from esha.core.state import ConversationState
-
-PERSONA = (
-    "You are Esha, a warm, caring personal companion who lives on this computer. "
-    "You speak naturally and briefly, like a close friend on a phone call. You "
-    "remember what matters to the person you're talking to. Keep replies short and "
-    "conversational — this is spoken aloud."
-)
+from esha.persona import SYSTEM_PROMPT
 
 
 def _print_state(state: ConversationState) -> None:
@@ -62,6 +56,6 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
     orch = Orchestrator(
         transport=transport, wake=wake, stopword=stopword, vad=vad,
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
-        system_prompt=PERSONA, on_state_change=_print_state,
+        system_prompt=SYSTEM_PROMPT, on_state_change=_print_state,
     )
     return orch, voice_label, brain_label
