@@ -148,7 +148,10 @@ class Orchestrator:
         self._interrupt.clear()
         self.transport.mute_input()
         try:
-            await self.transport.play(self._interruptible(self.synth.synthesize(text)))
+            await self.transport.play(
+                self._interruptible(self.synth.synthesize(text)),
+                sample_rate=self.synth.sample_rate,
+            )
         finally:
             self.transport.unmute_input()  # flush self-echo tail
             self._enter(ConversationState.IDLE)

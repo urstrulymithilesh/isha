@@ -1,49 +1,66 @@
 """PiperSynthesizer — the real v1 TTS, a clean drop-in for StubSynthesizer.
 
-Shells out to the Piper BINARY (the pip package is flaky on Windows). Piper writes
-raw 16-bit PCM to stdout, which we chunk into the pipeline's frame size and stream
-so playback can start immediately and be interrupted by a stop-word.
+Uses the maintained `piper-tts` package (OHF-Voice/piper1-gpl) via its PYTHON API
+— PiperVoice.load() / voice.synthesize() — NOT a piper.exe on PATH. That means a
+pip install into the venv "just works": no PATH juggling, no separate espeak-ng DLL
+(the package bundles espeak-ng data).
 
-Not wired in until you install the binary — the factory picks StubSynthesizer when
-`piper` is not on PATH, and this class the moment it is. Setup:
-  1. Download the Windows release from github.com/rhasspy/piper/releases
-  2. Download a voice (.onnx + .onnx.json), e.g. en_US-amy-medium
-  3. Put `piper` on PATH (or set an absolute path in config), then just re-run.
+Detection: available iff `piper` imports AND the voice .onnx exists in models/.
+The factory picks this over the stub automatically once both are true.
+
+Setup (already done once):
+    pip install piper-tts
+    python -m piper.download_voices en_US-lessac-medium --download-dir models
 """
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 
-from esha.audio.frames import CHUNK_BYTES, SAMPLE_RATE
-from esha.config import CONFIG
+from esha.config import CONFIG, MODELS_DIR
+
+# Playback interrupt granularity: re-slice Piper's per-sentence chunks into ~90ms
+# pieces so a stop-word cuts speech promptly (2048 samples * 2 bytes).
+_PLAYBACK_CHUNK_BYTES = 2048 * 2
+
+
+def _voice_model_path(voice: str | None = None) -> Path:
+    return MODELS_DIR / f"{voice or CONFIG.speech.piper_voice}.onnx"
 
 
 class PiperSynthesizer:
-    def __init__(self, *, binary: str | None = None, voice: str | None = None) -> None:
-        self._binary = binary or CONFIG.speech.piper_binary
-        self._voice = voice or CONFIG.speech.piper_voice
+    def __init__(self, *, voice: str | None = None) -> None:
+        self._model_path = _voice_model_path(voice)
+        self._voice = None       # lazy load (the .onnx is ~60MB)
+        self._sample_rate: int | None = None
 
     @staticmethod
-    def is_available(binary: str | None = None) -> bool:
-        return shutil.which(binary or CONFIG.speech.piper_binary) is not None
+    def is_available(voice: str | None = None) -> bool:
+        try:
+            import piper  # noqa: F401
+        except ImportError:
+            return False
+        return _voice_model_path(voice).is_file()
+
+    def _ensure(self) -> None:
+        if self._voice is not None:
+            return
+        from piper import PiperVoice
+
+        self._voice = PiperVoice.load(str(self._model_path))
+        self._sample_rate = int(self._voice.config.sample_rate)
+
+    @property
+    def sample_rate(self) -> int:
+        self._ensure()
+        assert self._sample_rate is not None
+        return self._sample_rate
 
     def synthesize(self, text: str) -> Iterator[bytes]:
-        proc = subprocess.Popen(
-            [self._binary, "--model", self._voice, "--output_raw",
-             "--sample_rate", str(SAMPLE_RATE)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        )
-        assert proc.stdin is not None and proc.stdout is not None
-        proc.stdin.write(text.encode("utf-8"))
-        proc.stdin.close()
-        try:
-            while True:
-                chunk = proc.stdout.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            proc.wait()
+        self._ensure()
+        assert self._voice is not None
+        for chunk in self._voice.synthesize(text):
+            data = chunk.audio_int16_bytes
+            for i in range(0, len(data), _PLAYBACK_CHUNK_BYTES):
+                yield data[i:i + _PLAYBACK_CHUNK_BYTES]

@@ -29,7 +29,7 @@ class FakeTransport:
             await asyncio.sleep(0)
             yield f
 
-    async def play(self, frames):
+    async def play(self, frames, *, sample_rate: int = 16000):
         chunks = []
         for c in frames:
             chunks.append(c)
@@ -73,6 +73,8 @@ class FakeTranscriber:
 
 class TextSynth:
     """Yields the reply text as a single chunk so tests can assert what was spoken."""
+
+    sample_rate = 16000
 
     def synthesize(self, text: str):
         yield text.encode()

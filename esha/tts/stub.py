@@ -25,6 +25,10 @@ class StubSynthesizer:
         self._ms_per_char = ms_per_char
         self._min_ms = min_ms
 
+    @property
+    def sample_rate(self) -> int:
+        return SAMPLE_RATE
+
     def synthesize(self, text: str) -> Iterator[bytes]:
         print(f'  Esha (stub voice): "{text}"')
         total_ms = max(self._min_ms, len(text) * self._ms_per_char)

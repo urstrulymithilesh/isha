@@ -59,8 +59,9 @@ class AudioTransport(Protocol):
         """Yield 16 kHz mono PCM frames from the mic until stopped."""
         ...
 
-    async def play(self, frames: Iterator[bytes]) -> None:
-        """Play a stream of PCM frames through the speaker/headset."""
+    async def play(self, frames: Iterator[bytes], *, sample_rate: int) -> None:
+        """Play a stream of PCM frames through the speaker/headset at sample_rate.
+        (Input stays 16 kHz; TTS may play at its own native rate, e.g. 22050.)"""
         ...
 
     def mute_input(self) -> None:
@@ -93,7 +94,12 @@ class Transcriber(Protocol):
 @runtime_checkable
 class Synthesizer(Protocol):
     """Text in, audio frames out — STREAMING, so playback can start before the
-    whole reply is synthesized. v1 impl: Piper (binary) on CPU."""
+    whole reply is synthesized. v1 impl: Piper (piper-tts) on CPU."""
+
+    @property
+    def sample_rate(self) -> int:
+        """Native output rate of this voice (e.g. 16000 stub, 22050 Piper medium)."""
+        ...
 
     def synthesize(self, text: str) -> Iterator[bytes]:
         ...

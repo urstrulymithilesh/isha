@@ -141,11 +141,18 @@ def check_embedder() -> None:
 
 
 def check_piper() -> None:
-    path = shutil.which(CONFIG.speech.piper_binary)
-    if path:
-        row("Piper binary", OK, path)
+    try:
+        import piper  # noqa: F401
+    except ImportError:
+        row("Piper (piper-tts)", BAD, "not installed (pip install piper-tts)")
+        return
+    from esha.tts.piper import PiperSynthesizer
+    if PiperSynthesizer.is_available():
+        row("Piper (piper-tts)", OK, f"voice '{CONFIG.speech.piper_voice}' ready")
     else:
-        row("Piper binary", WARN, "not on PATH — download the binary release (not the pip pkg)")
+        row("Piper (piper-tts)", WARN,
+            f"pkg ok, voice missing — python -m piper.download_voices "
+            f"{CONFIG.speech.piper_voice} --download-dir models")
 
 
 def check_ollama() -> None:

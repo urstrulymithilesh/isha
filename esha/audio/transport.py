@@ -72,12 +72,13 @@ class LocalAudioTransport:
         except asyncio.QueueFull:
             pass  # drop oldest-style: better to lose a frame than to lag
 
-    async def play(self, frames: Iterator[bytes]) -> None:
+    async def play(self, frames: Iterator[bytes], *, sample_rate: int = SAMPLE_RATE) -> None:
         # Chunk-wise write so the ingest task keeps running between chunks and a
         # stop-word can interrupt with ~one-chunk latency. The generator passed in
         # is the orchestrator's interruptible wrapper — it stops yielding on stop.
+        # sample_rate is the synth's native rate (16k stub, 22050 Piper medium).
         stream = sd.RawOutputStream(
-            samplerate=SAMPLE_RATE, dtype="int16", channels=1, device=self._output_device,
+            samplerate=sample_rate, dtype="int16", channels=1, device=self._output_device,
         )
         stream.start()
         try:

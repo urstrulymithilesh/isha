@@ -43,6 +43,8 @@ py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ollama pull qwen2.5:3b-instruct
+# Download a Piper voice (used for real speech; ~60MB, offline after this):
+python -m piper.download_voices en_US-lessac-medium --download-dir models
 ```
 
 ## Run the Phase 0 spike (do this first)
@@ -70,3 +72,24 @@ pytest
 
 Everything runs on-device and offline. Runtime data (`data/`, `*.db`, `*.wav`,
 `models/`) is gitignored and never leaves your machine.
+
+## License note (TTS is GPL-3.0)
+
+Esha's own code is MIT (see `pyproject.toml`). The TTS engine, **piper-tts**
+(OHF-Voice/piper1-gpl), is **GPL-3.0** — the old MIT `rhasspy/piper` is archived.
+
+What that means in practice for this repo:
+
+- We depend on piper-tts via `requirements.txt` and call its Python API; we do
+  **not** copy or redistribute its source or the voice model (`models/` is
+  gitignored). A source-only project that lists a GPL package as a dependency and
+  lets users `pip install` it themselves does not, in common practice, force the
+  rest of the repo to become GPL.
+- The GPL obligations (offer source, license the combined work under GPL) bite if
+  you **distribute a bundled/combined work** — e.g. ship a single installer or
+  frozen `.exe` that includes piper-tts. If you go that route, plan to comply or
+  swap the TTS backend.
+- Because TTS sits behind the `Synthesizer` interface, swapping to a
+  permissively-licensed engine later is a one-file change — you're not locked in.
+
+Not legal advice; just the honest lay of the land for a portfolio repo.

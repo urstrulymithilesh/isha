@@ -32,10 +32,11 @@ class SpeechConfig:
     whisper_model: str = "base.en"      # faster-whisper, int8, on CPU
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    sample_rate: int = 16_000           # pipeline convention: 16 kHz mono
-    # Piper is invoked as a binary subprocess (the pip package is flaky on Windows).
-    piper_binary: str = "piper"         # resolved on PATH or configured absolute path
-    piper_voice: str = "en_US-amy-medium"
+    sample_rate: int = 16_000           # pipeline INPUT convention: 16 kHz mono
+    # Piper via the piper-tts Python API (no PATH binary). The voice .onnx (+ .json)
+    # lives in models/; download with `python -m piper.download_voices <voice> --download-dir models`.
+    # Lessac medium is 22050 Hz — playback uses the voice's own rate, input stays 16k.
+    piper_voice: str = "en_US-lessac-medium"
 
 
 @dataclass(frozen=True)
