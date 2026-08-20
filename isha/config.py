@@ -64,7 +64,7 @@ class AudioConfig:
     vad_min_speech_ms: int = 300        # need this much speech before a silence can end a turn
     preroll_ms: int = 500               # audio kept BEFORE the wake fires, prepended to the
                                         # turn so the start of your sentence isn't lost
-    # Measure room + a test phrase on `esha run` startup and set gain + threshold.
+    # Measure room + a test phrase on `isha run` startup and set gain + threshold.
     auto_calibrate: bool = True
 
 
@@ -77,7 +77,7 @@ class WakeConfig:
 
 @dataclass(frozen=True)
 class MemoryConfig:
-    db_path: Path = DATA_DIR / "esha.db"
+    db_path: Path = DATA_DIR / "isha.db"
     embedder_model: str = "BAAI/bge-small-en-v1.5"  # CPU (fastembed) — must NOT be a GPU model
     recall_k: int = 3                   # strict read budget: top-3 facts per turn
     recent_turns: int = 12              # rolling history kept in context

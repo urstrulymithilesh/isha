@@ -164,7 +164,7 @@ It's a personal local app, so "distribution" = it runs on the builder's machine.
 For the **portfolio** value, treat distribution as: a public **GitHub repo** with a
 clear README (architecture diagram, the 4GB-VRAM constraint story, setup steps), a
 **short demo video/GIF** (the memory + timer beats), and a one-command local setup
-(`ollama pull ...` + `pip install -r requirements.txt` + `python -m esha`). No app
+(`ollama pull ...` + `pip install -r requirements.txt` + `python -m isha`). No app
 store, no CI/CD needed for v1; add a GitHub Actions lint/test check as polish.
 
 ## Phased Build Plan
@@ -217,7 +217,7 @@ bigger models / LoRA fine-tuning.
 
 ## Next Steps
 
-1. Scaffold `esha/` (Python 3.11, venv, package layout) and define the seven core
+1. Scaffold `isha/` (Python 3.11, venv, package layout) and define the seven core
    interfaces as empty protocols. **No logic yet — contracts first.**
 2. ~~Install/verify the local stack~~ **DONE** (`spike.py`, 8/9 green): venv +
    `requirements.txt` installed on 3.13; sqlite-vec loads into stdlib sqlite3;

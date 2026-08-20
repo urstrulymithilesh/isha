@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from esha.config import CONFIG, MODELS_DIR
+from isha.config import CONFIG, MODELS_DIR
 
 # Playback interrupt granularity: re-slice Piper's per-sentence chunks into ~90ms
 # pieces so a stop-word cuts speech promptly (2048 samples * 2 bytes).

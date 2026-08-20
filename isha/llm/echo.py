@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 
-from esha.core.interfaces import Message
+from isha.core.interfaces import Message
 
 
 class EchoLLM:

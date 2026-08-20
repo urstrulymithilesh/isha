@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from esha.audio.frames import CHUNK_SAMPLES
+from isha.audio.frames import CHUNK_SAMPLES
 
 
 class OpenWakeWordDetector:

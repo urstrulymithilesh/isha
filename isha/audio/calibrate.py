@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
+from isha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
 
 TARGET_SPEECH_RMS = 2500.0   # post-gain speech level we aim for (safe: ~8% of int16 FS)
 MAX_GAIN = 30.0

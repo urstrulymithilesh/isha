@@ -17,8 +17,8 @@ from collections.abc import AsyncIterator, Iterator
 import numpy as np
 import sounddevice as sd
 
-from esha.audio.devices import DeviceError, format_device_table, validate_input_device
-from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
+from isha.audio.devices import DeviceError, format_device_table, validate_input_device
+from isha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
 
 
 class LocalAudioTransport:

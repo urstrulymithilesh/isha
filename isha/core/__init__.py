@@ -1,6 +1,6 @@
 """Isha core: capability contracts and the preemption state machine."""
 
-from esha.core.state import (
+from isha.core.state import (
     AlertDisposition,
     ConversationState,
     disposition_for,

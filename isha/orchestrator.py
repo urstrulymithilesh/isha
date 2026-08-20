@@ -23,7 +23,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Iterator
 
-from esha.core.interfaces import (
+from isha.core.interfaces import (
     AudioTransport,
     LLM,
     Message,
@@ -31,10 +31,10 @@ from esha.core.interfaces import (
     Transcriber,
     WakeWord,
 )
-from esha.core.state import ConversationState, disposition_for
-from esha.audio.frames import SAMPLE_RATE
-from esha.audio.vad import Vad
-from esha.tts.speech_text import clean_for_speech
+from isha.core.state import ConversationState, disposition_for
+from isha.audio.frames import SAMPLE_RATE
+from isha.audio.vad import Vad
+from isha.tts.speech_text import clean_for_speech
 
 
 class Orchestrator:

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from esha.config import CONFIG
+from isha.config import CONFIG
 
 
 class WhisperTranscriber:

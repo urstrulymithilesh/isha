@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import asyncio
 
-from esha.audio.vad import Vad
-from esha.core.interfaces import LLMError
-from esha.core.state import ConversationState
-from esha.llm.echo import EchoLLM
-from esha.orchestrator import Orchestrator
+from isha.audio.vad import Vad
+from isha.core.interfaces import LLMError
+from isha.core.state import ConversationState
+from isha.llm.echo import EchoLLM
+from isha.orchestrator import Orchestrator
 
 WAKE, SPEECH, END, STOP = b"WAKE", b"speech", b"END", b"STOP"
 

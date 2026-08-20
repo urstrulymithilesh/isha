@@ -5,7 +5,7 @@ hardest, scariest part of the system is 100% testable with zero mocks, zero
 hardware, zero models. These tests run today.
 """
 
-from esha.core.state import AlertDisposition, ConversationState, disposition_for
+from isha.core.state import AlertDisposition, ConversationState, disposition_for
 
 
 def test_alert_while_user_speaking_waits_for_silence():

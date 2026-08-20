@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 
-from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE, ms_to_chunks
+from isha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE, ms_to_chunks
 
 
 class StubSynthesizer:

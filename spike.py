@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from esha.config import CONFIG
+from isha.config import CONFIG
 
 OK, WARN, BAD, DASH = "PASS", "WARN", "FAIL", " -- "
 _rows: list[tuple[str, str, str]] = []
@@ -146,7 +146,7 @@ def check_piper() -> None:
     except ImportError:
         row("Piper (piper-tts)", BAD, "not installed (pip install piper-tts)")
         return
-    from esha.tts.piper import PiperSynthesizer
+    from isha.tts.piper import PiperSynthesizer
     if PiperSynthesizer.is_available():
         row("Piper (piper-tts)", OK, f"voice '{CONFIG.speech.piper_voice}' ready")
     else:

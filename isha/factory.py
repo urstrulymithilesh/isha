@@ -2,13 +2,13 @@
 
 Change one line here (or just install the Piper binary / flip use_ollama) and the
 whole pipeline upgrades — no orchestrator or interface changes. That is the payoff
-of coding to the contracts in esha/core/interfaces.py.
+of coding to the contracts in isha/core/interfaces.py.
 """
 
 from __future__ import annotations
 
-from esha.core.state import ConversationState
-from esha.persona import SYSTEM_PROMPT
+from isha.core.state import ConversationState
+from isha.persona import SYSTEM_PROMPT
 
 
 def _print_state(state: ConversationState) -> None:
@@ -18,15 +18,15 @@ def _print_state(state: ConversationState) -> None:
 def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = None):
     """Returns (orchestrator, voice_label, brain_label). input_device overrides
     CONFIG.audio.input_device (from `run --device N`)."""
-    from esha.audio.transport import LocalAudioTransport
-    from esha.audio.vad import EnergyVad
-    from esha.audio.wakeword import OpenWakeWordDetector
-    from esha.config import CONFIG
-    from esha.llm.echo import EchoLLM
-    from esha.orchestrator import Orchestrator
-    from esha.stt.whisper import WhisperTranscriber
-    from esha.tts.piper import PiperSynthesizer
-    from esha.tts.stub import StubSynthesizer
+    from isha.audio.transport import LocalAudioTransport
+    from isha.audio.vad import EnergyVad
+    from isha.audio.wakeword import OpenWakeWordDetector
+    from isha.config import CONFIG
+    from isha.llm.echo import EchoLLM
+    from isha.orchestrator import Orchestrator
+    from isha.stt.whisper import WhisperTranscriber
+    from isha.tts.piper import PiperSynthesizer
+    from isha.tts.stub import StubSynthesizer
 
     in_dev = input_device if input_device is not None else CONFIG.audio.input_device
     transport = LocalAudioTransport(
@@ -50,14 +50,14 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         voice_label = "STUB (install the Piper binary to swap in real speech)"
 
     if use_ollama:
-        from esha.llm.ollama import OllamaLLM
+        from isha.llm.ollama import OllamaLLM
         llm = OllamaLLM()
         brain_label = f"Ollama/{CONFIG.reasoning.model}"
     else:
         llm = EchoLLM()
         brain_label = "Echo (Phase 0 stub brain)"
 
-    from esha.audio.frames import ms_to_chunks
+    from isha.audio.frames import ms_to_chunks
     orch = Orchestrator(
         transport=transport, wake=wake, stopword=stopword, vad=vad,
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,

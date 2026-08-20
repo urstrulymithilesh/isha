@@ -15,7 +15,7 @@ from __future__ import annotations
 import array
 from typing import Protocol, runtime_checkable
 
-from esha.audio.frames import ms_to_chunks
+from isha.audio.frames import ms_to_chunks
 
 
 @runtime_checkable

@@ -1,9 +1,9 @@
 """Entry point.
 
-    python -m esha              # status
-    python -m esha --spike      # hardware + plumbing spike
-    python -m esha run          # run the live walking-skeleton loop (needs mic + models)
-    python -m esha run --ollama # same, but use the real Ollama brain instead of Echo
+    python -m isha              # status
+    python -m isha --spike      # hardware + plumbing spike
+    python -m isha run          # run the live walking-skeleton loop (needs mic + models)
+    python -m isha run --ollama # same, but use the real Ollama brain instead of Echo
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from esha import __version__
-from esha.config import CONFIG
+from isha import __version__
+from isha.config import CONFIG
 
 
 def _status() -> int:
@@ -22,7 +22,7 @@ def _status() -> int:
     print(f"  wake/stop : {CONFIG.wake.model} / {CONFIG.wake.stop_word}")
     print(f"  memory    : {CONFIG.memory.db_path}")
     print()
-    print("Commands:  python -m esha run     (live loop)")
+    print("Commands:  python -m isha run     (live loop)")
     print("           python spike.py        (prove the hardware)")
     return 0
 
@@ -46,8 +46,8 @@ def _effective_device(device: int | None) -> int | None:
 
 def _calibrate_cmd(argv: list[str]) -> int:
     """Standalone: measure the mic and print config values to paste in."""
-    from esha.audio.calibrate import calibrate
-    from esha.audio.devices import DeviceError, validate_input_device
+    from isha.audio.calibrate import calibrate
+    from isha.audio.devices import DeviceError, validate_input_device
 
     device = _effective_device(_device_arg(argv))
     try:
@@ -56,7 +56,7 @@ def _calibrate_cmd(argv: list[str]) -> int:
     except DeviceError as e:
         print(f"\n{e}")
         return 1
-    print("\n  Put these in esha/config.py -> AudioConfig to make them permanent:")
+    print("\n  Put these in isha/config.py -> AudioConfig to make them permanent:")
     print(f"      capture_gain: float = {result.gain}")
     print(f"      vad_threshold: float = {result.threshold}")
     if not result.ok:
@@ -67,11 +67,11 @@ def _calibrate_cmd(argv: list[str]) -> int:
 def _say_cmd(argv: list[str]) -> int:
     """Synthesize text to a wav with a chosen voice — for A/B-ing voices offline.
 
-        python -m esha say "hello there" --voice en_US-amy-medium
+        python -m isha say "hello there" --voice en_US-amy-medium
     """
     import wave
 
-    from esha.tts.piper import PiperSynthesizer, _voice_model_path
+    from isha.tts.piper import PiperSynthesizer, _voice_model_path
 
     voice = _flag_value(argv, "--voice") or CONFIG.speech.piper_voice
     words, skip = [], False
@@ -106,10 +106,10 @@ def _say_cmd(argv: list[str]) -> int:
 
 
 def _run(argv: list[str]) -> int:
-    from esha.audio.calibrate import calibrate
-    from esha.audio.devices import DeviceError
+    from isha.audio.calibrate import calibrate
+    from isha.audio.devices import DeviceError
 
-    from esha.factory import build_orchestrator
+    from isha.factory import build_orchestrator
 
     device = _device_arg(argv)
     orch, voice_label, brain_label = build_orchestrator(

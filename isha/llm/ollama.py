@@ -17,8 +17,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator, Sequence
 
-from esha.config import CONFIG
-from esha.core.interfaces import LLMError, Message
+from isha.config import CONFIG
+from isha.core.interfaces import LLMError, Message
 
 
 class OllamaLLM:
