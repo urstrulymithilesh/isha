@@ -23,7 +23,11 @@ class ReasoningConfig:
     # Ollama's Vulkan GPU discovery watchdog times out ("context deadline exceeded") and
     # falls back to CPU — see server.log. GPU enablement is a separate task; ~12 tok/s
     # CPU is usable for turn-based voice. llama3.2 stays the A/B baseline (persona eval T6).
-    model: str = "qwen2.5:3b"
+    # Default is qwen2.5:7b: it grounds on injected memory RELIABLY where 3b confabulated
+    # (invented facts, hallucinated details) — a companion inventing facts about you is a
+    # worse failure than a slower one. Cost: ~14-17s/reply on CPU (3b was ~3-5s); streaming
+    # TTS softens that wait. Switch to "qwen2.5:3b" for speed if you accept flaky memory.
+    model: str = "qwen2.5:7b"
     keep_alive: int = -1                # keep the model resident in VRAM (Ollama: int -1 = forever; "-1" string is rejected)
     num_ctx: int = 4096                 # cap KV/context so Windows-reserved VRAM doesn't OOM the 4GB
     temperature: float = 0.6            # 0.8 made her over-improvise (question every turn);
