@@ -36,31 +36,18 @@ WAKE_THRESHOLD = 0.5
 # ---------------------------------------------------------------------------
 
 
-def list_devices() -> None:
-    hostapis = sd.query_hostapis()
-    try:
-        default_in, default_out = sd.default.device
-    except Exception:
-        default_in = default_out = -1
+def list_devices(inputs_only: bool = False) -> None:
+    from esha.audio.devices import format_device_table
 
-    print("=" * 78)
-    print(" AUDIO DEVICES  (look for your headset mic; note its index)")
-    print("=" * 78)
-    print(f" {'idx':>3}  {'in':>2} {'out':>3}  {'host API':<12} name")
-    print(" " + "-" * 74)
-    for i, d in enumerate(sd.query_devices()):
-        host = hostapis[d["hostapi"]]["name"]
-        marks = []
-        if i == default_in:
-            marks.append("DEFAULT-IN")
-        if i == default_out:
-            marks.append("DEFAULT-OUT")
-        mark = ("  <- " + ", ".join(marks)) if marks else ""
-        print(f" {i:>3}  {d['max_input_channels']:>2} {d['max_output_channels']:>3}"
-              f"  {host:<12} {d['name']}{mark}")
-    print(" " + "-" * 74)
-    print(" Tip: prefer a 'Windows WASAPI' input for your headset. Then run:")
-    print("      python diagnose.py listen <idx>")
+    title = "AUDIO INPUT DEVICES" if inputs_only else "AUDIO DEVICES  (cap = IN / OUT / IN+OUT)"
+    print("=" * 94)
+    print(f" {title}  (note your headset mic's index)")
+    print("=" * 94)
+    print(format_device_table(inputs_only=inputs_only))
+    print(" " + "-" * 92)
+    print(" Only rows with cap 'IN' or 'IN+OUT' can be recorded from.")
+    print(" Prefer an 'MME' or 'Windows WASAPI' entry over 'WDM-KS' (WDM-KS Bluetooth")
+    print(" mics often refuse to open). Then:  python diagnose.py listen <idx>")
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +75,17 @@ def _vu(rms: float, width: int = 40, full_scale: float = 3000.0) -> str:
 
 
 def listen(device: int | None, threshold: float) -> None:
+    from esha.audio.devices import DeviceError, format_device_table, validate_input_device
+
     print("=" * 78)
     print(" LIVE MONITOR — talk into your mic; Ctrl-C to stop")
     print("=" * 78)
+
+    try:
+        validate_input_device(device)
+    except DeviceError as e:
+        print(f"\n{e}")
+        return
 
     dev_info = sd.query_devices(device, "input") if device is not None else sd.query_devices(kind="input")
     print(f"  device     : [{device if device is not None else 'default'}] {dev_info['name']}")
@@ -103,8 +98,15 @@ def listen(device: int | None, threshold: float) -> None:
 
     peak_rms = 0.0
     peak_score = 0.0
-    with sd.InputStream(samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES,
-                        channels=1, dtype="int16", device=device) as stream:
+    try:
+        stream = sd.InputStream(samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES,
+                                channels=1, dtype="int16", device=device)
+    except sd.PortAudioError as e:
+        print(f"\nCould not open device {device} for 16 kHz mono capture ({e}).")
+        print("WDM-KS Bluetooth mics often refuse to open — try the mic's MME/WASAPI")
+        print(f"entry instead.\n\n{format_device_table(inputs_only=True)}")
+        return
+    with stream:
         while True:
             data, overflowed = stream.read(CHUNK_SAMPLES)
             samples = np.asarray(data, dtype=np.int16).reshape(-1)
@@ -144,6 +146,9 @@ def main() -> int:
             listen(device, threshold)
         except KeyboardInterrupt:
             print("\n\nStopped.")
+        return 0
+    if args and args[0] == "inputs":
+        list_devices(inputs_only=True)
         return 0
     list_devices()
     return 0

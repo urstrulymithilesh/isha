@@ -56,10 +56,15 @@ def _run(argv: list[str]) -> int:
     print("   stop  : say the stop word while she's speaking to cut her off")
     print("   Ctrl-C to quit.")
     print("=" * 60)
+    from esha.audio.devices import DeviceError
+
     try:
         asyncio.run(orch.run())
     except KeyboardInterrupt:
         print("\nGoodbye.")
+    except DeviceError as e:
+        print(f"\nAudio device problem:\n{e}")
+        return 1
     return 0
 
 

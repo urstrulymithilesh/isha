@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Iterator
 import numpy as np
 import sounddevice as sd
 
+from esha.audio.devices import DeviceError, format_device_table, validate_input_device
 from esha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
 
 
@@ -30,6 +31,8 @@ class LocalAudioTransport:
 
     async def capture(self) -> AsyncIterator[bytes]:
         self._loop = asyncio.get_running_loop()
+        # Fail fast + clearly if the index is missing or output-only.
+        validate_input_device(self._input_device)
 
         def _cb(indata, frames, time_info, status) -> None:  # noqa: ANN001 - sd callback
             # Runs on PortAudio's thread; hand the frame to the asyncio loop.
@@ -37,10 +40,21 @@ class LocalAudioTransport:
             if self._loop is not None:
                 self._loop.call_soon_threadsafe(self._offer, pcm)
 
-        with sd.RawInputStream(
-            samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES, dtype="int16",
-            channels=1, callback=_cb, device=self._input_device,
-        ):
+        try:
+            stream = sd.RawInputStream(
+                samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES, dtype="int16",
+                channels=1, callback=_cb, device=self._input_device,
+            )
+        except sd.PortAudioError as e:
+            # e.g. -9996 Invalid device: the index exists but PortAudio can't open it
+            # for 16 kHz mono capture (common with Bluetooth WDM-KS entries).
+            raise DeviceError(
+                f"Could not open input device {self._input_device} for 16 kHz mono "
+                f"capture ({e}). Bluetooth mics under 'Windows WDM-KS' often can't be "
+                f"opened directly — try the same mic's MME or WASAPI entry, or another "
+                f"device.\n\nInput-capable devices:\n{format_device_table(inputs_only=True)}"
+            ) from e
+        with stream:
             while True:
                 yield await self._queue.get()
 
