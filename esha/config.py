@@ -39,8 +39,9 @@ class SpeechConfig:
     sample_rate: int = 16_000           # pipeline INPUT convention: 16 kHz mono
     # Piper via the piper-tts Python API (no PATH binary). The voice .onnx (+ .json)
     # lives in models/; download with `python -m piper.download_voices <voice> --download-dir models`.
-    # Lessac medium is 22050 Hz — playback uses the voice's own rate, input stays 16k.
-    piper_voice: str = "en_US-lessac-medium"
+    # 22050 Hz — playback uses the voice's own rate, input stays 16k. amy-medium
+    # chosen over lessac-medium for a warmer, less newscaster-flat tone.
+    piper_voice: str = "en_US-amy-medium"
 
 
 @dataclass(frozen=True)
@@ -57,8 +58,9 @@ class AudioConfig:
     # RMS level (POST-gain) a frame must exceed to count as speech. 500 was too high
     # for laptop mics; auto-calibration sets a real value from your room + voice.
     vad_threshold: float = 150.0
-    vad_silence_ms: int = 1100          # trailing silence that ends a turn (700 cut people
-                                        # off mid-sentence; ~1.1s tolerates natural pauses)
+    vad_silence_ms: int = 850           # trailing silence that ends a turn. Single-number
+                                        # trade-off: 700 cut people off mid-sentence, 1100 felt
+                                        # laggy after finishing; 850 is the middle. Tune by feel.
     vad_min_speech_ms: int = 300        # need this much speech before a silence can end a turn
     preroll_ms: int = 500               # audio kept BEFORE the wake fires, prepended to the
                                         # turn so the start of your sentence isn't lost
