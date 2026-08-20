@@ -60,34 +60,57 @@ def recommend_audio_settings(
 # ---------------------------------------------------------------------------
 
 
-def _measure_rms(device: int | None, seconds: float) -> list[float]:
+def _measure_rms(device: int | None, seconds: float, *, warmup_s: float = 0.3,
+                 live: bool = False) -> list[float]:
     import sounddevice as sd
 
     rms: list[float] = []
     n_frames = max(1, int(seconds * SAMPLE_RATE / CHUNK_SAMPLES))
+    warm_frames = max(0, int(warmup_s * SAMPLE_RATE / CHUNK_SAMPLES))
     with sd.InputStream(samplerate=SAMPLE_RATE, blocksize=CHUNK_SAMPLES,
                         channels=1, dtype="int16", device=device) as stream:
+        for _ in range(warm_frames):
+            stream.read(CHUNK_SAMPLES)  # discard warmup frames (stream settling)
         for _ in range(n_frames):
             data, _over = stream.read(CHUNK_SAMPLES)
             s = np.asarray(data, dtype=np.int16).reshape(-1).astype(np.float64)
-            rms.append(float(np.sqrt(np.mean(s ** 2))) if s.size else 0.0)
+            r = float(np.sqrt(np.mean(s ** 2))) if s.size else 0.0
+            rms.append(r)
+            if live:
+                bar = "#" * min(30, int(30 * r / 2000))
+                print(f"\r     hearing: {r:6.0f} |{bar:<30}|", end="", flush=True)
+    if live:
+        print()
     return rms
 
 
-def calibrate(device: int | None, *, ambient_s: float = 2.0, speech_s: float = 3.0) -> Calibration:
-    """Interactive: measure ambient, then a test phrase; return a recommendation."""
-    print(f"\n  Calibrating mic (device {device if device is not None else 'default'})...")
-    print(f"  1) Stay SILENT for {ambient_s:.0f}s (measuring the room)...", flush=True)
-    time.sleep(0.4)
+def _countdown(prompt: str) -> None:
+    for k in (3, 2, 1):
+        print(f"\r  {prompt} in {k}...  ", end="", flush=True)
+        time.sleep(0.8)
+    print(f"\r  {prompt} -> GO! speak now:            ")
+
+
+def calibrate(device: int | None, *, ambient_s: float = 1.5, speech_s: float = 3.0,
+              max_attempts: int = 2) -> Calibration:
+    """Interactive: measure ambient, then a test phrase (with a countdown + live
+    level so you don't miss the window); retry once if it hears nothing."""
+    dev = device if device is not None else "default"
+    print(f"\n  Calibrating mic (device {dev}).")
+    print("  Stay SILENT for a moment — measuring the room...", flush=True)
+    time.sleep(0.5)
     noise = _measure_rms(device, ambient_s)
+    noise_rms = float(np.percentile(noise, 90)) if noise else 0.0
 
-    print(f"  2) Now SAY A SENTENCE for {speech_s:.0f}s "
-          "(e.g. 'hey esha, what's the weather like today')...", flush=True)
-    speech = _measure_rms(device, speech_s)
-
-    noise_rms = float(np.percentile(noise, 90)) if noise else 0.0   # above nearly all room noise
-    speech_rms = float(np.percentile(speech, 75)) if speech else 0.0  # sustained speech, not just peak
-    result = recommend_audio_settings(noise_rms, speech_rms)
-    print(f"  -> measured room~{noise_rms:.0f}, voice~{speech_rms:.0f} (raw)")
-    print(f"  -> {result.message}")
+    result: Calibration | None = None
+    for attempt in range(1, max_attempts + 1):
+        _countdown("Say a full sentence (e.g. 'hey Esha, how are you today')")
+        speech = _measure_rms(device, speech_s, warmup_s=0.1, live=True)
+        speech_rms = float(np.percentile(speech, 75)) if speech else 0.0
+        result = recommend_audio_settings(noise_rms, speech_rms)
+        print(f"  -> room~{noise_rms:.0f}, voice~{speech_rms:.0f} (raw); {result.message}")
+        if result.ok or attempt == max_attempts:
+            return result
+        print("  I barely heard you that time — let's try once more.\n")
+    assert result is not None
     return result

@@ -24,6 +24,11 @@ from typing import Protocol, runtime_checkable
 # ---------------------------------------------------------------------------
 
 
+class LLMError(RuntimeError):
+    """The reasoning backend failed (unreachable, HTTP error, timeout). Callers
+    must handle this so a bad LLM call never hangs the conversation silently."""
+
+
 @dataclass(frozen=True)
 class Message:
     """One turn in a chat exchange. Role is 'system' | 'user' | 'assistant'."""

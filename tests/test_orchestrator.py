@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 from esha.audio.vad import Vad
+from esha.core.interfaces import LLMError
 from esha.core.state import ConversationState
 from esha.llm.echo import EchoLLM
 from esha.orchestrator import Orchestrator
@@ -142,6 +143,24 @@ def test_alert_while_idle_is_spoken_now():
     orch.notify("your timer is done")
     asyncio.run(orch.run(max_frames=1))
     assert "your timer is done" in transport.spoken
+
+
+class BrokenLLM:
+    supports_tools = False
+
+    def chat(self, messages, *, stream=True):
+        raise LLMError("simulated Ollama 500")
+
+
+def test_brain_failure_does_not_hang_and_speaks_error():
+    orch, transport = _build([WAKE, SPEECH, END])
+    orch.llm = BrokenLLM()
+    asyncio.run(orch.run())
+    # did not stall in THINKING/SPEAKING — recovered to idle
+    assert orch.state is ConversationState.IDLE
+    # spoke a clear apology instead of a reply, and left no dangling user turn
+    assert transport.spoken and "went wrong" in transport.spoken[-1].lower()
+    assert [m for m in orch._history if m.role == "user"] == []
 
 
 def test_alert_during_listening_waits_until_after_reply():

@@ -124,16 +124,31 @@ class Orchestrator:
         self._turn_task = asyncio.create_task(self._run_turn(audio))
 
     async def _run_turn(self, audio: bytes) -> None:
-        text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
-        if not text:
-            self._enter(ConversationState.IDLE)
+        appended_user = False
+        try:
+            text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
+            if not text:
+                self._enter(ConversationState.IDLE)
+                return
+            print(f'  you: "{text}"')
+            self._history.append(Message("user", text))
+            appended_user = True
+            reply = await self._think()
+            self._history.append(Message("assistant", reply))
+            await self._speak(reply)
+        except Exception as e:  # noqa: BLE001 - a failed turn must never hang "thinking"
+            # LLMError, TTS failure, transcription error — surface it, don't stall.
+            print(f"  [turn failed] {type(e).__name__}: {e}")
+            if appended_user and self._history and self._history[-1].role == "user":
+                self._history.pop()  # don't leave a dangling half-exchange in context
+            try:
+                await self._speak("Sorry, something went wrong on my end. Let's try again.")
+            except Exception:  # noqa: BLE001 - even the apology's audio can fail
+                pass
+        finally:
+            if self.state is not ConversationState.IDLE:
+                self._enter(ConversationState.IDLE)
             await self._drain_alerts()
-            return
-        self._history.append(Message("user", text))
-        reply = await self._think()
-        self._history.append(Message("assistant", reply))
-        await self._speak(reply)
-        await self._drain_alerts()
 
     async def _think(self) -> str:
         # EchoLLM is instant; a real streaming LLM runs off-thread so the ingest

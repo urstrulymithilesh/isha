@@ -24,6 +24,7 @@ class ReasoningConfig:
     model: str = "llama3.2"
     keep_alive: int = -1                # keep the model resident in VRAM (Ollama: int -1 = forever; "-1" string is rejected)
     num_ctx: int = 4096                 # cap KV/context so Windows-reserved VRAM doesn't OOM the 4GB
+    request_timeout: int = 90           # seconds; CPU generation is slow, but this bounds a hang
 
 
 @dataclass(frozen=True)
