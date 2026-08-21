@@ -340,6 +340,23 @@ with mocked audio/LLM. Persona/recall = eval, re-run on every model swap.
   Deferred; pairs naturally with the custom wake word + voice work.
 - **LoRA fine-tuning** — needs a hardware upgrade.
 
+## STANDING WORKFLOW — append a progress entry every meaningful change
+
+**For whoever/whatever is developing Isha (including Claude Code): when you finish a
+meaningful chunk of work — a phase, a real feature, a significant fix — append ONE
+`ProgressEntry` to `PROGRESS_LOG` in `isha/memory/progress.py` as a standard completion
+step, in the same pass as running tests and committing.** The user never runs a command
+for this; the entry ships with the commit.
+
+- `significant=True` — a real capability change (she'll sound more alive when asked how
+  she feels). `significant=False` — a minor tweak (she'll say "about the same").
+- Write `summary` in plain, human words she can voice in character — not a changelog line.
+- Newest entry goes at the END of the list.
+
+This is deliberately a code edit, not a CLI command: it's version-controlled, travels with
+the repo, survives a memory reset, and is impossible to forget when it lives next to the
+commit. Her feelings/state behaviors read `latest()` / `previous()` from this log.
+
 ## Seeded memory (core + self facts) — added post-Phase-2
 
 Beyond conversationally-learned facts, the store holds **seeded** facts with a protected

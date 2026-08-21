@@ -33,7 +33,7 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
-from isha.context import build_messages
+from isha.context import build_messages, next_step_nudge, self_state_context
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
@@ -53,6 +53,35 @@ _PAST_PATTERNS = (
 def _asks_about_past(text: str) -> bool:
     t = text.lower()
     return any(p in t for p in _PAST_PATTERNS)
+
+
+# "How are you / what can you do / what version are you" — questions about HERSELF.
+# Only then do we spend context on the self-state block.
+_SELF_PATTERNS = (
+    "how are you", "how do you feel", "how're you", "how you doing", "how are things",
+    "what can you do", "your abilities", "what do you do", "who are you", "introduce yourself",
+    "your version", "your current version", "your state", "your build", "what are you",
+    "your tech", "built you", "current version", "version are you", "your capabilities",
+    "how you're built", "how you are built", "feeling",
+)
+
+
+def _asks_about_self(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _SELF_PATTERNS) or _asks_about_past(text)
+
+
+# "What should I do next?" — he's asking to be told the next step.
+_NEXT_STEP_PATTERNS = (
+    "what should i do", "what do i do", "what next", "what's next", "whats next",
+    "what should we do", "what do we do", "where do i start", "what should i build",
+    "what should i work on", "any ideas what", "what would you suggest",
+)
+
+
+def _asks_what_next(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _NEXT_STEP_PATTERNS)
 
 
 class Orchestrator:
@@ -190,10 +219,21 @@ class Orchestrator:
             )
             if facts:
                 print("  [memory] recalled " + "; ".join(f.subject or f.text[:30] for f in facts))
+            extra: list[Message] = []
+            if _asks_about_self(text):
+                from isha.memory.progress import latest, previous
+                block = self_state_context(latest(), previous())
+                if block is not None:
+                    extra.append(block)
+                    print(f"  [self] injected current state ({latest().version})")
+            if _asks_what_next(text):
+                extra.append(next_step_nudge())
+                print("  [self] next-step question — deflecting to him")
             messages = build_messages(
                 self._system_prompt, facts, self._history,
                 recent_limit=CONFIG.memory.recent_turns,
                 char_budget=CONFIG.memory.context_char_budget,
+                extra_system=extra,
             )
             reply = await self._think(messages)
             reply = trim_reflexive_question(reply, keep_rate=CONFIG.reasoning.question_keep_rate)
