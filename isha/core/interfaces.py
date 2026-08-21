@@ -48,6 +48,15 @@ class Fact:
     # last-write-wins conflict resolution — a new fact with the same subject replaces
     # the old one. None means dedupe by exact text instead.
     subject: str | None = None
+    # Where the fact came from, which also sets its protection level:
+    #   "conversation" — learned from chat; can be overwritten by later extraction (default)
+    #   "core"         — seeded identity/relationship facts; extraction may NOT overwrite them
+    #   "self"         — seeded facts about Isha's own current build; extraction-protected
+    #   "self_history" — seeded past-version facts; protected AND hidden from normal recall
+    origin: str = "conversation"
+
+
+PROTECTED_ORIGINS = frozenset({"core", "self", "self_history"})
 
 
 # ---------------------------------------------------------------------------

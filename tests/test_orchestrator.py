@@ -223,7 +223,7 @@ class FakeStore:
         self.turns.append(m)
         return len(self.turns)
 
-    def recall(self, q, *, k=3):
+    def recall(self, q, *, k=3, include_history=False):
         return self.recall_facts[:k]
 
     def recent(self, *, limit=20):
@@ -316,6 +316,15 @@ def test_recalled_fact_reaches_the_llm_context():
     assert any(m.role == "system" and "Anya" in m.content for m in rec.last_messages)
     # and the current user message is still the last thing in the list
     assert rec.last_messages[-1].role == "user"
+
+
+def test_asks_about_past_detects_history_questions():
+    from isha.orchestrator import _asks_about_past
+    assert _asks_about_past("how were you before?")
+    assert _asks_about_past("what did you used to be like")
+    assert _asks_about_past("you've come a long way, huh")
+    assert not _asks_about_past("what's my sister's name?")
+    assert not _asks_about_past("how are you today")
 
 
 def test_alert_during_listening_waits_until_after_reply():

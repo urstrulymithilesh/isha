@@ -126,15 +126,33 @@ def _memory_cmd(argv: list[str]) -> int:
         hits = store.recall(query, k=CONFIG.memory.recall_k)
         print(f"Recall for {query!r} (top {CONFIG.memory.recall_k}):")
         for f in hits:
-            print(f"  - [{f.subject}] {f.text}  (conf {f.confidence})")
+            print(f"  - ({f.origin}) [{f.subject}] {f.text}  (conf {f.confidence})")
         if not hits:
             print("  (nothing relevant found)")
     else:
         facts = store.all_facts()
         print(f"{len(facts)} fact(s) stored in {db}:")
         for f in facts:
-            print(f"  - [{f.subject}] {f.text}  (conf {f.confidence})")
+            print(f"  - ({f.origin}) [{f.subject}] {f.text}  (conf {f.confidence})")
     print(f"\nMemory log: {db.parent / 'memory-log.txt'}")
+    store.close()
+    return 0
+
+
+def _seed_cmd(argv: list[str]) -> int:
+    """(Re)apply the seed facts from isha/memory/seed.py — core identity/relationship +
+    self build facts. Idempotent; run it once, or again after editing seed.py."""
+    from isha.memory.embedder import FastEmbedEmbedder
+    from isha.memory.seed import seed
+    from isha.memory.store import SqliteMemoryStore
+
+    CONFIG.memory.db_path.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteMemoryStore(
+        CONFIG.memory.db_path, FastEmbedEmbedder(),
+        log_path=CONFIG.memory.db_path.parent / "memory-log.txt",
+    )
+    n = seed(store)
+    print(f"Seeded/updated {n} core + self facts into {CONFIG.memory.db_path}.")
     store.close()
     return 0
 
@@ -205,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         return _say_cmd(argv[1:])
     if argv and argv[0] == "memory":
         return _memory_cmd(argv[1:])
+    if argv and argv[0] == "seed":
+        return _seed_cmd(argv[1:])
     if argv and argv[0] == "run":
         return _run(argv[1:])
     return _status()

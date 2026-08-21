@@ -144,3 +144,42 @@ def test_parse_tolerates_code_fence():
     raw = '```json\n[{"text":"the user codes in python","confidence":0.8}]\n```'
     facts = parse_extracted_facts(raw)
     assert len(facts) == 1 and "python" in facts[0].text
+
+
+# -- protection + history gating + seeding ----------------------------------
+
+
+def test_conversational_extraction_cannot_overwrite_a_core_fact():
+    s = _store()
+    s.add_fact(Fact(text="the user's name is Mithilesh", confidence=1.0,
+                    subject="user's name", origin="core"))
+    # an offhand conversational fact on the same subject must NOT win
+    s.add_fact(Fact(text="the user's name is Bob", confidence=0.9, subject="user's name"))
+    facts = s.all_facts()
+    assert len(facts) == 1
+    assert "Mithilesh" in facts[0].text and facts[0].origin == "core"
+
+
+def test_seeding_can_update_a_protected_fact():
+    s = _store()
+    s.add_fact(Fact(text="Isha is at build v1", confidence=1.0, subject="self: version", origin="self"))
+    s.add_fact(Fact(text="Isha is at build v2", confidence=1.0, subject="self: version", origin="self"))
+    facts = s.all_facts()
+    assert len(facts) == 1 and "v2" in facts[0].text  # seed origin updates itself
+
+
+def test_self_history_hidden_unless_explicitly_requested():
+    s = _store()
+    s.add_fact(Fact(text="Isha used to sound robotic", confidence=1.0,
+                    subject="self-history: v0", origin="self_history"))
+    assert s.recall("tell me about your old voice", k=3) == []          # hidden by default
+    hits = s.recall("tell me about your old voice", k=3, include_history=True)
+    assert hits and "robotic" in hits[0].text                            # shown when asked
+
+
+def test_seed_plants_protected_facts_and_is_idempotent():
+    from isha.memory.seed import seed, seed_if_needed
+    s = _store()
+    assert seed(s) > 0
+    assert any(f.origin == "core" and "Isha" in f.text for f in s.all_facts())
+    assert seed_if_needed(s) == 0  # core facts already present -> no-op

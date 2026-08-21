@@ -21,7 +21,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-from isha.core.interfaces import Embedder, Fact, Message
+from isha.core.interfaces import PROTECTED_ORIGINS, Embedder, Fact, Message
 
 
 def _now() -> str:
@@ -55,7 +55,8 @@ class SqliteMemoryStore:
                 id INTEGER PRIMARY KEY, role TEXT, content TEXT, ts TEXT);
             CREATE TABLE IF NOT EXISTS facts(
                 id INTEGER PRIMARY KEY, subject TEXT, text TEXT NOT NULL,
-                confidence REAL, source_turn_id INTEGER, ts TEXT);
+                confidence REAL, source_turn_id INTEGER, ts TEXT,
+                origin TEXT NOT NULL DEFAULT 'conversation');
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
@@ -89,12 +90,19 @@ class SqliteMemoryStore:
         cur = self._conn.cursor()
 
         if fact.subject:
-            existing = cur.execute("SELECT id FROM facts WHERE subject = ?", (fact.subject,)).fetchone()
-            if existing is not None:  # last-write-wins on the subject
-                fid = existing[0]
-                cur.execute(
-                    "UPDATE facts SET text=?, confidence=?, source_turn_id=?, ts=? WHERE id=?",
-                    (fact.text, fact.confidence, fact.source_turn_id, _now(), fid),
+            existing = cur.execute(
+                "SELECT id, origin FROM facts WHERE subject = ?", (fact.subject,)
+            ).fetchone()
+            if existing is not None:
+                fid, existing_origin = existing
+                # Protection: conversational extraction may NOT overwrite a seeded core/
+                # self fact. An offhand remark can't rewrite Isha's identity or our history.
+                if existing_origin in PROTECTED_ORIGINS and fact.origin == "conversation":
+                    self._log("PROTECTED", fact)
+                    return
+                cur.execute(  # last-write-wins on the subject
+                    "UPDATE facts SET text=?, confidence=?, source_turn_id=?, ts=?, origin=? WHERE id=?",
+                    (fact.text, fact.confidence, fact.source_turn_id, _now(), fact.origin, fid),
                 )
                 cur.execute("DELETE FROM vec_facts WHERE fact_id = ?", (fid,))
                 cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fid, blob))
@@ -110,36 +118,55 @@ class SqliteMemoryStore:
                 return
 
         cur.execute(
-            "INSERT INTO facts(subject, text, confidence, source_turn_id, ts) VALUES(?, ?, ?, ?, ?)",
-            (fact.subject, fact.text, fact.confidence, fact.source_turn_id, _now()),
+            "INSERT INTO facts(subject, text, confidence, source_turn_id, ts, origin) "
+            "VALUES(?, ?, ?, ?, ?, ?)",
+            (fact.subject, fact.text, fact.confidence, fact.source_turn_id, _now(), fact.origin),
         )
         fid = cur.lastrowid
         cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fid, blob))
         self._conn.commit()
         self._log("STORED", fact)
 
-    def recall(self, query: str, *, k: int = 3) -> list[Fact]:
+    def recall(self, query: str, *, k: int = 3, include_history: bool = False) -> list[Fact]:
+        """Semantic top-K. Past-version ('self_history') facts are hidden unless
+        include_history=True, so they only surface when the user asks about her past."""
         if self._dim is None or not query.strip():
             return []
         qblob = sqlite_vec.serialize_float32(self._embedder.embed([query])[0])
+        # Over-fetch so we can drop history facts and still return k real hits.
         ids = [
             row[0]
             for row in self._conn.execute(
                 "SELECT fact_id FROM vec_facts WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-                (qblob, k),
+                (qblob, k * 4),
             ).fetchall()
         ]
         if not ids:
             return []
         placeholders = ",".join("?" * len(ids))
         by_id = {
-            r[0]: Fact(text=r[2], confidence=r[3], source_turn_id=r[4], subject=r[1])
+            r[0]: Fact(text=r[2], confidence=r[3], source_turn_id=r[4], subject=r[1], origin=r[5])
             for r in self._conn.execute(
-                f"SELECT id, subject, text, confidence, source_turn_id FROM facts WHERE id IN ({placeholders})",
+                f"SELECT id, subject, text, confidence, source_turn_id, origin "
+                f"FROM facts WHERE id IN ({placeholders})",
                 ids,
             ).fetchall()
         }
-        return [by_id[i] for i in ids if i in by_id]  # preserve nearest-first order
+        history: list[Fact] = []
+        other: list[Fact] = []
+        for i in ids:  # nearest-first within each bucket
+            f = by_id.get(i)
+            if f is None:
+                continue
+            if f.origin == "self_history":
+                if include_history:
+                    history.append(f)      # only when the user asked about her past
+            else:
+                other.append(f)
+        # When asked about the past, lead with history so the old-version facts actually
+        # surface (a current 'self' fact would otherwise out-rank them by similarity).
+        ordered = (history + other) if include_history else other
+        return ordered[:k]
 
     # -- turns -------------------------------------------------------------
 
@@ -154,9 +181,10 @@ class SqliteMemoryStore:
     def all_facts(self) -> list[Fact]:
         """Every stored fact, oldest first — for inspection/debugging (isha memory)."""
         rows = self._conn.execute(
-            "SELECT subject, text, confidence, source_turn_id FROM facts ORDER BY id"
+            "SELECT subject, text, confidence, source_turn_id, origin FROM facts ORDER BY id"
         ).fetchall()
-        return [Fact(text=r[1], confidence=r[2], source_turn_id=r[3], subject=r[0]) for r in rows]
+        return [Fact(text=r[1], confidence=r[2], source_turn_id=r[3], subject=r[0], origin=r[4])
+                for r in rows]
 
     def recent(self, *, limit: int = 20) -> list[Message]:
         rows = self._conn.execute(

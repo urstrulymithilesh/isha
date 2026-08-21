@@ -41,6 +41,19 @@ from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
 
+# Phrases that mean "tell me about your PAST self" — only then do we surface her
+# self_history facts (so old-version details don't leak into normal conversation).
+_PAST_PATTERNS = (
+    "used to", "how were you", "how you were", "before", "previous version", "previously",
+    "your past", "earlier version", "older version", "back then", "in the beginning",
+    "when you started", "how you started", "how far you", "come a long way",
+)
+
+
+def _asks_about_past(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _PAST_PATTERNS)
+
 
 class Orchestrator:
     def __init__(
@@ -170,7 +183,11 @@ class Orchestrator:
             print(f'  you: "{text}"')
             self._history.append(Message("user", text))
             appended_user = True
-            facts = self.store.recall(text, k=CONFIG.memory.recall_k) if self.store else []
+            facts = (
+                self.store.recall(text, k=CONFIG.memory.recall_k,
+                                  include_history=_asks_about_past(text))
+                if self.store else []
+            )
             if facts:
                 print("  [memory] recalled " + "; ".join(f.subject or f.text[:30] for f in facts))
             messages = build_messages(
@@ -222,19 +239,31 @@ class Orchestrator:
 
     async def _extract_facts(self, exchange: str) -> None:
         assert self.store is not None and self.extractor is not None
+        debug = CONFIG.memory.debug_extraction
         try:
+            print("  [memory] extracting… (stay silent ~7s; don't speak or quit yet)")
             async with self._llm_lock:          # never overlaps a live reply on Ollama
                 if self.state is not ConversationState.IDLE:
-                    return                       # a new turn started meanwhile — skip
+                    print("  [memory] skipped — a new turn started before extraction could run")
+                    return
                 raw = await asyncio.to_thread(self.extractor.extract, exchange)
+            if debug:
+                print(f"  [memory:debug] asked: {exchange!r}")
+                print(f"  [memory:debug] model returned: {raw!r}")
             facts = parse_extracted_facts(raw, min_confidence=CONFIG.memory.min_fact_confidence)
+            if debug:
+                print(f"  [memory:debug] parsed {len(facts)} fact(s): "
+                      + "; ".join(f"{f.subject}={f.text!r}" for f in facts))
             for fact in facts:
                 self.store.add_fact(fact)        # sync CPU embed; on the loop thread
             if facts:
-                print("  [memory] stored "
-                      + "; ".join(f.subject or f.text[:30] for f in facts))
+                print("  [memory] stored " + "; ".join(f.subject or f.text[:30] for f in facts))
+            else:
+                print("  [memory] nothing to store — no durable facts found in that exchange")
         except asyncio.CancelledError:
-            raise                                # a new turn cancelled us — clean exit
+            print("  [memory] extraction CANCELLED — you started a new turn before it finished; "
+                  "that fact was NOT saved. Next time wait for '[memory] stored'.")
+            raise
         except Exception as e:                   # noqa: BLE001 - extraction is best-effort
             print(f"  [extraction failed] {type(e).__name__}: {e}")
 

@@ -328,8 +328,28 @@ with mocked audio/LLM. Persona/recall = eval, re-run on every model swap.
 - **Skill-mastery RAG** (Approach C) — v2 headline feature.
 - **Proactive daily source digests** — later phase.
 - **Full-duplex barge-in / AEC** — stop-word interrupt only; true open-speaker duplex deferred.
-- **Custom "Isha" wake word** — stock word until Phase 4.
+- **Custom "Isha" wake word** — stock "hey jarvis" until a custom model is trained
+  (openwakeword.com / Colab, synthetic data). Likely bundled with voice cloning as one
+  future phase. A long unusual phrase ("wake up daddy's home") is a *poor* wake-word
+  candidate — higher false-trigger + miss rate than a short trained phrase; if trained,
+  do a short 2-3 syllable phrase.
+- **Voice-recognition authentication (FUTURE)** — Isha should respond only to Mithilesh's
+  actual voice, not anyone else's. Speaker verification (e.g. a local speaker-embedding
+  model like SpeechBrain ECAPA / Resemblyzer over the captured audio, gate the wake +
+  turn on a cosine match to enrolled samples). Fully local, fits behind the audio path.
+  Deferred; pairs naturally with the custom wake word + voice work.
 - **LoRA fine-tuning** — needs a hardware upgrade.
+
+## Seeded memory (core + self facts) — added post-Phase-2
+
+Beyond conversationally-learned facts, the store holds **seeded** facts with a protected
+`origin` (`isha/memory/seed.py`, applied via `python -m isha seed`, auto-seeded first run):
+- **core** — identity + relationship (her name Isha, his name Mithilesh, that he created
+  her, the intended partner relationship, that she's his best creation). Conversational
+  extraction can NEVER overwrite these (an offhand remark can't rewrite her identity).
+- **self** — her current build (version, abilities, intro, tech stack); recalled normally.
+- **self_history** — past-version facts; hidden from normal recall, surfaced only when the
+  user asks about her past (`_asks_about_past`), so she can tease about her progress.
 
 ## Implementation Tasks (from this review)
 

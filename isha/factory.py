@@ -64,6 +64,10 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
             CONFIG.memory.db_path, FastEmbedEmbedder(),
             log_path=CONFIG.memory.db_path.parent / "memory-log.txt",
         )
+        from isha.memory.seed import seed_if_needed
+        n = seed_if_needed(store)      # first run: plant core + self facts
+        if n:
+            print(f"  [memory] seeded {n} core/self facts (first run)")
         extractor = FactExtractor(llm)
     else:
         llm = EchoLLM()
