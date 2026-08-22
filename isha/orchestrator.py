@@ -35,7 +35,8 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
-from isha.context import build_messages, next_step_nudge, self_state_context
+from isha.context import (build_messages, next_step_nudge, self_state_context,
+                          shared_history_context)
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
@@ -76,6 +77,27 @@ _SELF_PATTERNS = (
     "your tech", "built you", "current version", "version are you", "your capabilities",
     "how you're built", "how you are built", "feeling",
 )
+
+
+# "tell me about us", "what do you remember about our time together". These retrieve
+# nothing in particular, so without an anchor she invents a shared past.
+_SHARED_HISTORY_PATTERNS = (
+    "about us", "between us", "we have together", "our time together", "our history",
+    "our relationship", "memories of us", "memory of us", "remember about us",
+    "inside joke", "inside jokes", "how did we meet", "how we met", "what have we",
+    "things we", "we been through", "our moments", "our memories", "you and i",
+    "you and me", "us together",
+)
+
+
+def _asks_about_shared_history(text: str) -> bool:
+    low = text.lower()
+    if any(p in low for p in _SHARED_HISTORY_PATTERNS):
+        return True
+    # "what memories do you have" with no specific subject attached.
+    return ("memories" in low or "memory" in low) and any(
+        w in low for w in ("do you have", "do we", "your favourite", "your favorite",
+                           "what are", "tell me"))
 
 
 def _asks_about_self(text: str) -> bool:
@@ -288,6 +310,9 @@ class Orchestrator:
             if _asks_what_next(text):
                 extra.append(next_step_nudge())
                 print("  [self] next-step question — deflecting to him")
+            if _asks_about_shared_history(text) and self.store is not None:
+                extra.append(shared_history_context(self.store.all_facts()))
+                print("  [memory] broad 'about us' question — anchored to stored facts only")
             # Timers/reminders: parsed deterministically (no extra LLM round-trip),
             # scheduled immediately, then she confirms it in her own words.
             # Forget FIRST: the reminder parser treats "forget" + "that" as cancelling

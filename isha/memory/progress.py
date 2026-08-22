@@ -136,6 +136,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "to, rather than saying she will and quietly keeping them",
         True,
     ),
+    ProgressEntry(
+        "v1.6 — she stopped inventing a past", "2026-08-22",
+        "asked what she remembered about the two of you, she used to make up lazy Sundays "
+        "and walks and jokes that never happened. Now she tells the truth — that there "
+        "isn't much history yet — and says what she actually knows instead. Warmth without "
+        "making things up",
+        True,
+    ),
 ]
 
 

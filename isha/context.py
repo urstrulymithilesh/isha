@@ -66,6 +66,42 @@ def next_step_nudge() -> Message:
     )
 
 
+def shared_history_context(facts, *, max_items: int = 12):
+    """Anchor a broad "tell me about us" question in what she ACTUALLY knows.
+
+    Specific questions ground fine — they retrieve a matching fact. Broad ones
+    retrieve nothing relevant, and with nothing to hold onto the model free-associates
+    from the persona: the tastes it was given (rain, grey afternoons, pineapple) come
+    back out as things they supposedly did together. Measured at 5 out of 5 before
+    this block existed.
+
+    Same remedy as the pending-reminders answer: state exactly what exists, and say
+    plainly that there is nothing else.
+    """
+    known = [f.text for f in facts
+             if f.origin in ("conversation", "core")][:max_items]
+    if known:
+        listing = "; ".join(known)
+        body = (
+            "This is the COMPLETE list of what you actually know about him: "
+            f"{listing}. That is everything — you have no other shared history, no "
+            "past outings, no running jokes, no remembered afternoons together. "
+            "Answer using ONLY what is in that list. Be honest and warm about how "
+            "little there is so far, the way you would if he asked whether you "
+            "remembered one specific thing: say you don't have much history with him "
+            "yet, then mention what you do know. Do NOT invent a shared past, and do "
+            "NOT describe your own tastes as things the two of you did together."
+        )
+    else:
+        body = (
+            "You know NOTHING about him yet — no stored facts at all. Say that "
+            "honestly and warmly, and ask him to tell you something. Do NOT invent "
+            "memories, outings, jokes or afternoons together, and do NOT describe "
+            "your own tastes as shared history."
+        )
+    return Message("system", body)
+
+
 def build_messages(
     system_prompt: str,
     facts: Sequence[Fact],
