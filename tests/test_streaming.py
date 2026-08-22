@@ -10,6 +10,7 @@ the state returns to IDLE, and the LLM lock is released.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from isha.core.interfaces import LLMError
 from isha.core.state import ConversationState
@@ -60,13 +61,18 @@ class ScriptedLLM:
 
     supports_tools = False
 
-    def __init__(self, text: str, *, on_token=None):
+    def __init__(self, text: str, *, on_token=None, delay: float = 0.0):
         self._tokens = [w + " " for w in text.split(" ")]
         self._on_token = on_token
+        self._delay = delay
         self.tokens_emitted = 0
 
     def chat(self, messages, *, stream=True):
         for token in self._tokens:
+            if self._delay:
+                time.sleep(self._delay)   # a real model is not instant; without this the
+                                          # producer thread can outrun the consumer and
+                                          # any interleaving assertion becomes a race
             self.tokens_emitted += 1
             if self._on_token:
                 self._on_token(self)
@@ -111,7 +117,7 @@ def test_speaking_starts_before_generation_finishes():
         if "spoke_first_at" not in progress and llm.orch.state is ConversationState.SPEAKING:
             progress["spoke_first_at"] = llm.tokens_emitted
 
-    llm = ScriptedLLM("One. Two. Three. Four. Five. Six.", on_token=watch)
+    llm = ScriptedLLM("One. Two. Three. Four. Five. Six.", on_token=watch, delay=0.02)
     orch, _t = _orch(llm)
     llm.orch = orch
     asyncio.run(orch._think_and_speak([]))

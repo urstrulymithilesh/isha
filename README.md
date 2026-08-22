@@ -100,9 +100,13 @@ Green = go. A red probe (e.g. sqlite-vec won't load) blocks app code.
 Two layers, deliberately:
 
 ```bash
-pytest                          # 173 unit tests with fakes, ~1 second
-python -m isha smoke            # 5 scenarios on the REAL stack, ~1 minute
+.venv\Scripts\python.exe -m pytest        # 173 unit tests with fakes, ~1 second
+.venv\Scripts\python.exe -m isha smoke    # 5 scenarios on the REAL stack, ~1 minute
 ```
+
+(If you have run `.venv\Scriptsctivate`, plain `pytest` and `python -m isha smoke`
+work too. Running them with the *system* Python fails on a missing dependency —
+`isha` will tell you so and point at the venv rather than dumping a traceback.)
 
 The unit tests drive the orchestrator with fakes — a stateless wake detector, an
 instant LLM — so they pin logic fast. But a fake can only fail in ways you thought

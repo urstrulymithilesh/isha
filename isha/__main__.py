@@ -257,6 +257,23 @@ def _run(argv: list[str]) -> int:
     return 0
 
 
+def _wrong_python(missing: str) -> int:
+    """A missing dependency here almost always means the system Python was used
+    instead of the project venv, which is an easy copy-paste mistake and a very
+    confusing traceback. Say so plainly."""
+    print(f"Missing dependency: {missing}")
+    print()
+    print(f"This is running:  {sys.executable}")
+    print("which is probably NOT the project venv.")
+    print()
+    print("Use the venv Python:")
+    print(r"    .\.venv\Scripts\python.exe -m isha " + " ".join(sys.argv[1:] or ["run"]))
+    print()
+    print("Or, if the venv itself is incomplete:")
+    print(r"    .\.venv\Scripts\python.exe -m pip install -r requirements.txt")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if "--spike" in argv:
@@ -275,10 +292,16 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "seed":
         return _seed_cmd(argv[1:])
     if argv and argv[0] == "smoke":
-        import isha.smoke
+        try:
+            import isha.smoke
+        except ImportError as e:
+            return _wrong_python(e.name or str(e))
         return isha.smoke.main(argv[1:])
     if argv and argv[0] == "run":
-        return _run(argv[1:])
+        try:
+            return _run(argv[1:])
+        except ImportError as e:
+            return _wrong_python(e.name or str(e))
     return _status()
 
 
