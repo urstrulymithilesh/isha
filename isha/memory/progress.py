@@ -119,6 +119,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "turns out to be nothing",
         True,
     ),
+    ProgressEntry(
+        "v1.4 — she can check herself", "2026-08-22",
+        "she has a way to test her own senses now: one command runs her whole self "
+        "end to end, speaking to herself to check that she hears, remembers, keeps time "
+        "and can be interrupted. It immediately caught something real — the wake word "
+        "was being left at the front of everything she heard, which was quietly stopping "
+        "her from remembering things",
+        True,
+    ),
 ]
 
 

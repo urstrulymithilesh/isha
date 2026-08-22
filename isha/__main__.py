@@ -23,6 +23,7 @@ def _status() -> int:
     print(f"  memory    : {CONFIG.memory.db_path}")
     print()
     print("Commands:  python -m isha run     (live loop)")
+    print("           python -m isha smoke   (live end-to-end check, ~1-3 min)")
     print("           python spike.py        (prove the hardware)")
     return 0
 
@@ -273,6 +274,9 @@ def main(argv: list[str] | None = None) -> int:
         return _memory_cmd(argv[1:])
     if argv and argv[0] == "seed":
         return _seed_cmd(argv[1:])
+    if argv and argv[0] == "smoke":
+        import isha.smoke
+        return isha.smoke.main(argv[1:])
     if argv and argv[0] == "run":
         return _run(argv[1:])
     return _status()

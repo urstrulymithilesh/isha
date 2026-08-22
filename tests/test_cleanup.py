@@ -1,0 +1,43 @@
+"""Wake-word prefix stripping.
+
+Found by the live smoke harness, not by unit tests: the pre-roll puts the wake word
+into the transcript, and on qwen2.5:3b that prefix makes fact extraction return []
+where the same sentence without it extracts correctly. Every turn was handing the
+extractor a poisoned string.
+"""
+
+from isha.stt.cleanup import strip_wake_prefix
+
+WAKE = "hey_jarvis"
+
+
+def test_strips_the_wake_word_whisper_actually_produces():
+    assert strip_wake_prefix("Jarvis. Remember that my favorite color is turquoise.", WAKE) \
+        == "Remember that my favorite color is turquoise."
+
+
+def test_strips_common_whisper_renderings():
+    assert strip_wake_prefix("Hey Jarvis, set a timer", WAKE) == "set a timer"
+    assert strip_wake_prefix("Hey, Jarvis. What is my name?", WAKE) == "What is my name?"
+    assert strip_wake_prefix("hey jarvis tell me a joke", WAKE) == "tell me a joke"
+
+
+def test_leaves_the_wake_word_alone_when_it_is_the_whole_utterance():
+    """He said only the wake word — stripping to empty would silently drop the turn."""
+    assert strip_wake_prefix("Jarvis", WAKE) == "Jarvis"
+    assert strip_wake_prefix("Hey Jarvis.", WAKE) == "Hey Jarvis."
+
+
+def test_only_strips_from_the_front():
+    assert strip_wake_prefix("Remind me to call Jarvis back", WAKE) \
+        == "Remind me to call Jarvis back"
+
+
+def test_ordinary_speech_is_untouched():
+    for text in ("What is the weather", "I had a rough day", ""):
+        assert strip_wake_prefix(text, WAKE) == text
+
+
+def test_adapts_to_a_different_wake_model():
+    assert strip_wake_prefix("Alexa, what time is it", "alexa") == "what time is it"
+    assert strip_wake_prefix("Hey Mycroft, hello", "hey_mycroft") == "hello"

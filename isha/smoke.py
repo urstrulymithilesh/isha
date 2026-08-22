@@ -1,0 +1,461 @@
+"""Live smoke harness — the REAL pipeline, end to end, headless.
+
+Why this exists
+---------------
+The 167 unit tests drive the orchestrator with fakes: a stateless wake detector, an
+instant LLM, a synth that returns the text back. They pin logic, they run in a second,
+and they are the right tool for that. But every serious bug in this project so far was
+invisible to them *by construction*:
+
+  * a brain failure moved into a worker thread and was silently swallowed — the fake
+    LLM never failed, so no fake could show it;
+  * the real wake detector went deaf after a long reply because it is a STREAMING model
+    that needs continuous audio — the fake fires on `frame == trigger` regardless.
+
+Both were found by hand, painfully, in live sessions. This harness exists so the next
+one is found by a command instead.
+
+How it runs headless
+--------------------
+Piper is used as the MOUTH that feeds the pipeline's EARS: sentences are synthesised,
+resampled to 16 kHz, and pushed through the real openWakeWord detector, the real VAD,
+and real faster-whisper. Verified assumption — openWakeWord models are themselves
+trained on Piper-generated speech, so synthetic "hey jarvis" genuinely triggers them.
+
+So: no microphone, no speakers, no human. Everything is real EXCEPT the audio hardware
+boundary itself (which cannot be exercised headless by definition) — capture replays
+synthesised frames and playback records instead of writing to a device.
+
+Each scenario uses its own temporary database. Your real memory is never touched.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import tempfile
+import time
+import traceback
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+from scipy.signal import resample_poly
+
+from isha.audio.frames import CHUNK_SAMPLES, SAMPLE_RATE
+from isha.audio.vad import EnergyVad
+from isha.audio.wakeword import OpenWakeWordDetector
+from isha.config import CONFIG
+from isha.core.interfaces import Message
+from isha.core.state import ConversationState
+from isha.llm.ollama import OllamaLLM
+from isha.memory.embedder import FastEmbedEmbedder
+from isha.memory.extraction import FactExtractor
+from isha.memory.store import SqliteMemoryStore
+from isha.orchestrator import Orchestrator
+from isha.persona import SYSTEM_PROMPT
+from isha.schedule.scheduler import Scheduler
+from isha.schedule.store import SqliteScheduleStore
+from isha.stt.whisper import WhisperTranscriber
+from isha.tts.piper import PiperSynthesizer
+
+SILENCE = np.zeros(CHUNK_SAMPLES, dtype=np.int16).tobytes()
+
+
+# ---------------------------------------------------------------------------
+# Piper as the mouth: text -> 16 kHz frames the real detectors can hear
+# ---------------------------------------------------------------------------
+
+
+class Mouth:
+    """Speaks test phrases into the pipeline. Cached — Piper is slow to reload."""
+
+    def __init__(self) -> None:
+        self._synth = PiperSynthesizer()
+        self._cache: dict[str, list[bytes]] = {}
+
+    def frames(self, text: str, *, trailing_silence_s: float = 1.4) -> list[bytes]:
+        if text not in self._cache:
+            pcm = b"".join(self._synth.synthesize(text))
+            audio = np.frombuffer(pcm, dtype=np.int16)
+            at16k = resample_poly(audio, SAMPLE_RATE, self._synth.sample_rate)
+            # Loud enough to clear the VAD threshold the same way a real voice would.
+            at16k = np.clip(at16k * 1.5, -32768, 32767).astype(np.int16)
+            tail = np.zeros(int(SAMPLE_RATE * trailing_silence_s), dtype=np.int16)
+            stream = np.concatenate([at16k, tail])
+            self._cache[text] = [
+                stream[i:i + CHUNK_SAMPLES].tobytes()
+                for i in range(0, len(stream) - CHUNK_SAMPLES, CHUNK_SAMPLES)
+            ]
+        return list(self._cache[text])
+
+
+class ScriptedTransport:
+    """Replays synthesised frames as the mic; records playback instead of a speaker.
+
+    `barge_in_frames` are injected the moment she starts speaking, which is how the
+    interrupt path gets exercised for real rather than by poking a flag.
+    """
+
+    def __init__(self, frames: list[bytes], *, barge_in_frames: list[bytes] | None = None,
+                 tail_frames: int = 4000) -> None:
+        self._frames = frames
+        self._barge_in = barge_in_frames or []
+        self._tail = tail_frames
+        self.played: list[bytes] = []
+        self.play_calls = 0
+        self.playback_speed = 0.3      # fraction of real time; keeps the run quick
+        self._speaking = False
+        self._started_speaking = asyncio.Event()
+        self._muted = False
+
+    async def capture(self) -> AsyncIterator[bytes]:
+        for frame in self._frames:
+            await asyncio.sleep(0)
+            yield frame
+        # Wait for her to ACTUALLY start speaking, then cut in. Polling for this was
+        # racy — the reply could finish between polls — so playback signals an event
+        # and capture blocks on it. Deterministic: the injected frames are always
+        # consumed while the orchestrator is still in SPEAKING.
+        if self._barge_in:
+            try:
+                await asyncio.wait_for(self._started_speaking.wait(), timeout=90)
+            except asyncio.TimeoutError:
+                pass
+            for f in self._barge_in:
+                await asyncio.sleep(0)
+                yield f
+        quiet_after_speech = 0
+        for _ in range(self._tail):
+            await asyncio.sleep(0.002)
+            if self.play_calls and not self._speaking:
+                quiet_after_speech += 1
+                if quiet_after_speech > 400:        # she is done; wrap up
+                    break
+            yield SILENCE
+
+    async def play(self, frames: Iterator[bytes], *, sample_rate: int = SAMPLE_RATE) -> None:
+        """Take TIME, proportional to the audio, the way a real speaker does.
+
+        Returning instantly made barge-in a race: the whole reply could finish before
+        the injected frames were consumed, so the test flapped. Sleeping per chunk also
+        keeps interruption fine-grained, matching how _interruptible behaves live.
+        """
+        self.play_calls += 1
+        self._speaking = True
+        self._started_speaking.set()
+        for chunk in frames:
+            self.played.append(chunk)
+            real_seconds = len(chunk) / 2 / sample_rate
+            await asyncio.sleep(real_seconds * self.playback_speed)
+        self._speaking = False
+
+    def mute_input(self) -> None:
+        self._muted = True
+
+    def unmute_input(self) -> None:
+        self._muted = False
+
+
+# ---------------------------------------------------------------------------
+# Scenario plumbing
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Result:
+    name: str
+    passed: bool
+    detail: str
+    seconds: float = 0.0
+    checks: list[str] = field(default_factory=list)
+
+
+def _build(transport, db: Path, *, with_memory=True, with_scheduler=False):
+    llm = OllamaLLM()
+    store = extractor = scheduler = None
+    if with_memory:
+        store = SqliteMemoryStore(db, FastEmbedEmbedder(), log_path=db.parent / "smoke-log.txt")
+        extractor = FactExtractor(llm)
+    orch = Orchestrator(
+        transport=transport,
+        wake=OpenWakeWordDetector(CONFIG.wake.model),
+        stopword=OpenWakeWordDetector(CONFIG.wake.stop_word),
+        vad=EnergyVad(threshold=CONFIG.audio.vad_threshold,
+                      silence_ms=CONFIG.audio.vad_silence_ms,
+                      min_speech_ms=CONFIG.audio.vad_min_speech_ms),
+        transcriber=WhisperTranscriber(),
+        llm=llm,
+        synthesizer=PiperSynthesizer(),
+        system_prompt=SYSTEM_PROMPT,
+        preroll_frames=8,
+        store=store,
+        extractor=extractor,
+    )
+    if with_scheduler:
+        scheduler = Scheduler(SqliteScheduleStore(db), orch.notify, tick_seconds=0.5)
+        orch.scheduler = scheduler
+    return orch, store, scheduler
+
+
+# ---------------------------------------------------------------------------
+# The scenarios — each one an area that has actually bitten us
+# ---------------------------------------------------------------------------
+
+
+async def scenario_conversation(mouth: Mouth, db: Path) -> Result:
+    """Wake -> STT -> LLM -> speech, through every real component."""
+    checks = []
+    frames = mouth.frames("hey jarvis") + mouth.frames("say hello in five words")
+    transport = ScriptedTransport(frames)
+    orch, store, _ = _build(transport, db)
+    await orch.run()
+
+    if not any(s is ConversationState.LISTENING for s in orch.states_visited):
+        return Result("conversation", False, "the real wake detector never fired", checks=checks)
+    checks.append("real wake detector fired on synthesised speech")
+
+    user_turns = [m for m in orch._history if m.role == "user"]
+    if not user_turns or not user_turns[0].content.strip():
+        return Result("conversation", False, "whisper produced no transcript", checks=checks)
+    checks.append(f"whisper transcribed: {user_turns[0].content[:48]!r}")
+
+    replies = [m for m in orch._history if m.role == "assistant"]
+    if not replies:
+        return Result("conversation", False, "the model produced no reply", checks=checks)
+    checks.append(f"ollama replied: {replies[0].content[:48]!r}")
+
+    if not transport.played:
+        return Result("conversation", False, "piper produced no audio", checks=checks)
+    secs = sum(len(c) for c in transport.played) / 2 / 22050
+    checks.append(f"piper produced ~{secs:.1f}s of speech in {transport.play_calls} sentence(s)")
+
+    if orch.state is not ConversationState.IDLE:
+        return Result("conversation", False, f"ended in {orch.state.value}, not idle", checks=checks)
+    checks.append("returned to idle, lock released")
+    if store:
+        store.close()
+    return Result("conversation", True, "full turn completed on the real stack", checks=checks)
+
+
+async def scenario_memory(mouth: Mouth, db: Path) -> Result:
+    """Teach a fact through speech, then prove it is in real SQLite and recallable
+    from a FRESH store — the cross-process claim, checked rather than assumed.
+
+    Extraction is attempted twice. qwen2.5:3b genuinely misses durable facts some of
+    the time, and a harness that goes red on a good build stops being trusted; two
+    attempts distinguishes "the pipeline is broken" from "the small model shrugged".
+    """
+    checks = []
+    turns = 0
+    for attempt in (1, 2):
+        frames = mouth.frames("hey jarvis") + mouth.frames(
+            "remember that my favourite colour is turquoise")
+        transport = ScriptedTransport(frames)
+        orch, store, _ = _build(transport, db)
+        await orch.run()
+        if orch._extract_task:
+            try:
+                await asyncio.wait_for(asyncio.shield(orch._extract_task), timeout=90)
+            except Exception:
+                pass
+        turns = store._conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+        got = store.all_facts()
+        store.close()
+        if got:
+            checks.append(f"extraction succeeded on attempt {attempt}")
+            break
+        checks.append(f"attempt {attempt}: 3b extracted nothing")
+    if turns < 2:
+        return Result("memory", False, "the exchange was never persisted", checks=checks)
+    checks.append(f"{turns} turn(s) persisted to sqlite")
+
+    fresh = SqliteMemoryStore(db, FastEmbedEmbedder())      # a NEW connection
+    facts = fresh.all_facts()
+    hits = fresh.recall("what is my favourite colour", k=3)
+    fresh.close()
+    if not facts:
+        return Result("memory", False,
+                      "3b extracted nothing on either attempt — the storage path is fine "
+                      "(turns persisted), the small model is the weak link",
+                      checks=checks)
+    checks.append(f"{len(facts)} fact(s) stored: " + "; ".join(f.text[:40] for f in facts[:3]))
+    if not hits:
+        return Result("memory", False, "stored, but semantic recall returned nothing",
+                      checks=checks)
+    checks.append(f"recall from a fresh store returned: {hits[0].text[:48]!r}")
+    return Result("memory", True, "stored and recalled across a new connection", checks=checks)
+
+
+async def scenario_timer(mouth: Mouth, db: Path) -> Result:
+    """A spoken timer reaches the real scheduler and actually fires."""
+    checks = []
+    frames = mouth.frames("hey jarvis") + mouth.frames("set a timer for four seconds")
+    transport = ScriptedTransport(frames, tail_frames=140)
+    orch, store, scheduler = _build(transport, db, with_scheduler=True)
+    await orch.run()
+
+    all_rows = scheduler._store._conn.execute(
+        "SELECT status, label FROM reminders").fetchall()
+    if not all_rows:
+        if store:
+            store.close()
+        return Result("timer", False, "the spoken timer never reached the scheduler",
+                      checks=checks)
+    checks.append(f"spoken request reached the scheduler: {all_rows[0][1]!r}")
+
+    already_fired = [r for r in all_rows if r[0] == "fired"]
+    if already_fired:
+        checks.append("fired during the run and was announced out loud")
+    else:
+        # Not due yet during the run — drive the clock forward instead of waiting.
+        n = scheduler.check(now=datetime.now() + timedelta(seconds=60))
+        if n == 0:
+            if store:
+                store.close()
+            return Result("timer", False, "the timer never fired when due", checks=checks)
+        checks.append(f"fired when the clock was advanced ({n} announcement(s))")
+    if scheduler.pending():
+        if store:
+            store.close()
+        return Result("timer", False, "still pending after firing — it would repeat",
+                      checks=checks)
+    checks.append("closed out, will not repeat")
+    if store:
+        store.close()
+    return Result("timer", True, "set by voice, fired on time", checks=checks)
+
+
+async def scenario_barge_in(mouth: Mouth, db: Path) -> Result:
+    """The one that broke live: interrupt mid-reply, then be heard afterwards."""
+    checks = []
+    frames = mouth.frames("hey jarvis") + mouth.frames(
+        "tell me about the ocean in a few sentences")
+    transport = ScriptedTransport(frames, barge_in_frames=mouth.frames("hey jarvis"),
+                                  tail_frames=120)
+    orch, store, _ = _build(transport, db)
+    await orch.run()
+
+    if not transport.play_calls:
+        if store:
+            store.close()
+        return Result("barge-in", False, "she never started speaking, nothing to interrupt",
+                      checks=checks)
+    checks.append(f"she began speaking ({transport.play_calls} sentence(s) played)")
+
+    if not orch._interrupt.is_set() and ConversationState.LISTENING not in orch.states_visited[2:]:
+        if store:
+            store.close()
+        return Result("barge-in", False,
+                      "the real stop-word detector never fired during playback", checks=checks)
+    checks.append("real stop-word detector fired during playback")
+
+    if orch._llm_lock.locked():
+        if store:
+            store.close()
+        return Result("barge-in", False, "LLM LOCK LEAKED after the interrupt", checks=checks)
+    checks.append("llm lock released")
+    if store:
+        store.close()
+    return Result("barge-in", True, "interrupted cleanly, lock released", checks=checks)
+
+
+async def scenario_wake_after_reply(mouth: Mouth, db: Path) -> Result:
+    """Regression for detector starvation: the wake word must still work AFTER a
+    long reply. This is the bug no fake could express."""
+    checks = []
+    wake = OpenWakeWordDetector(CONFIG.wake.model)
+    stop = OpenWakeWordDetector(CONFIG.wake.stop_word)
+    transport = ScriptedTransport([])
+    orch = Orchestrator(
+        transport=transport, wake=wake, stopword=stop,
+        vad=EnergyVad(threshold=CONFIG.audio.vad_threshold,
+                      silence_ms=CONFIG.audio.vad_silence_ms,
+                      min_speech_ms=CONFIG.audio.vad_min_speech_ms),
+        transcriber=None, llm=OllamaLLM(), synthesizer=PiperSynthesizer(),
+        preroll_frames=8)
+
+    orch._enter(ConversationState.SPEAKING)          # a long reply plays
+    for _ in range(120):                             # ~10 seconds of her talking
+        await orch._handle_frame(SILENCE)
+    checks.append("10s reply elapsed with the wake detector in the background")
+
+    orch._enter(ConversationState.IDLE)
+    for frame in mouth.frames("hey jarvis"):         # he wakes her straight after
+        await orch._handle_frame(frame)
+        if orch.state is ConversationState.LISTENING:
+            break
+
+    if orch.state is not ConversationState.LISTENING:
+        return Result("wake-after-reply", False,
+                      "WAKE MISSED after a long reply — the detector went cold "
+                      "(this is the starvation bug)", checks=checks)
+    checks.append("wake fired immediately after the reply — detector stayed warm")
+    return Result("wake-after-reply", True, "detector survives a long reply", checks=checks)
+
+
+SCENARIOS = [
+    ("conversation", scenario_conversation),
+    ("memory", scenario_memory),
+    ("timer", scenario_timer),
+    ("barge-in", scenario_barge_in),
+    ("wake-after-reply", scenario_wake_after_reply),
+]
+
+
+# ---------------------------------------------------------------------------
+
+
+async def run_all(only: str | None = None) -> int:
+    print("=" * 72)
+    print(" Isha live smoke test — REAL Ollama, Piper, faster-whisper, SQLite")
+    print(" Headless: Piper speaks into the real detectors. No mic or speakers needed.")
+    print(" Expect roughly 1-3 minutes; the models are doing actual work.")
+    print("=" * 72)
+
+    print("\n  warming up models (piper, whisper, ollama)…", flush=True)
+    t0 = time.perf_counter()
+    mouth = Mouth()
+    mouth.frames("hey jarvis")
+    WhisperTranscriber().transcribe(SILENCE * 12)
+    list(OllamaLLM().chat([Message("user", "hi")], stream=False))
+    print(f"  ready in {time.perf_counter() - t0:.0f}s")
+
+    results: list[Result] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, fn in SCENARIOS:
+            if only and only not in name:
+                continue
+            print(f"\n> {name}")
+            started = time.perf_counter()
+            try:
+                result = await fn(mouth, Path(tmp) / f"{name}.db")
+            except Exception as e:            # noqa: BLE001 - a crash is a FAILURE, not an abort
+                result = Result(name, False, f"{type(e).__name__}: {e}")
+                result.checks = [line.strip() for line in
+                                 traceback.format_exc().splitlines()[-3:]]
+            result.seconds = time.perf_counter() - started
+            for check in result.checks:
+                print(f"    - {check}")
+            print(f"  [{'PASS' if result.passed else 'FAIL'}] {name} "
+                  f"({result.seconds:.0f}s) — {result.detail}")
+            results.append(result)
+
+    failed = [r for r in results if not r.passed]
+    print("\n" + "=" * 72)
+    for r in results:
+        print(f"  {'PASS' if r.passed else 'FAIL'}  {r.name:<18} {r.seconds:>5.0f}s  {r.detail}")
+    total = sum(r.seconds for r in results)
+    if failed:
+        print(f"\n  {len(failed)} of {len(results)} scenarios FAILED in {total:.0f}s")
+    else:
+        print(f"\n  all {len(results)} scenarios passed in {total:.0f}s")
+    print("=" * 72)
+    return 1 if failed else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = argv or []
+    only = next((a for a in argv if not a.startswith("-")), None)
+    return asyncio.run(run_all(only))

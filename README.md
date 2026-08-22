@@ -97,6 +97,31 @@ Green = go. A red probe (e.g. sqlite-vec won't load) blocks app code.
 
 ## Run the tests
 
+Two layers, deliberately:
+
+```bash
+pytest                          # 173 unit tests with fakes, ~1 second
+python -m isha smoke            # 5 scenarios on the REAL stack, ~1 minute
+```
+
+The unit tests drive the orchestrator with fakes — a stateless wake detector, an
+instant LLM — so they pin logic fast. But a fake can only fail in ways you thought
+to model, and the serious bugs here were all outside that: a brain failure swallowed
+inside a worker thread, a real wake detector going deaf after a long reply because it
+needs continuous audio, and the wake word bleeding into the transcript and breaking
+fact extraction. None were reachable with fakes.
+
+`isha smoke` runs the real Ollama, Piper, faster-whisper and SQLite end to end, using
+Piper as a mouth feeding the pipeline's ears — so it needs no microphone, no speakers
+and no human. It covers a conversation turn, memory stored and recalled across a new
+connection, a spoken timer firing, barge-in, and the wake word still working after a
+long reply. Each scenario uses a temporary database; your real memory is untouched.
+
+Run the unit tests constantly; run the smoke test after anything that touches audio,
+threading, or the model boundary.
+
+
+
 The deterministic core (preemption logic, and soon memory + scheduler) is
 100% unit-tested with no hardware or models:
 

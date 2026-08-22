@@ -44,6 +44,7 @@ from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
                                  RescheduleCommand, _phrase_delay,
                                  parse_schedule_command)
 from isha.reply_style import trim_reflexive_question
+from isha.stt.cleanup import strip_wake_prefix
 from isha.tts.sentences import split_complete_sentences
 from isha.tts.speech_text import clean_for_speech
 
@@ -259,6 +260,9 @@ class Orchestrator:
         print(f"  [captured {secs:.1f}s of audio]")
         try:
             text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
+            # The pre-roll means the wake word itself is usually in the transcript, and
+            # that prefix measurably breaks fact extraction on 3b. Strip it once, here.
+            text = strip_wake_prefix(text, CONFIG.wake.model)
             if not text:
                 print("  [transcript empty — heard no clear speech]")
                 self._enter(ConversationState.IDLE)
