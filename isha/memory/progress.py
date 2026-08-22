@@ -81,6 +81,13 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "also forget something she'd remembered wrongly",
         True,
     ),
+    ProgressEntry(
+        "v0.9 — she keeps track out loud", "2026-08-22",
+        "she can tell you what she's holding for you now — ask if any timers are running "
+        "and she'll say what's pending, or that there's nothing. And if you ask to change "
+        "something without saying what to, she asks instead of quietly doing nothing",
+        True,
+    ),
 ]
 
 

@@ -429,6 +429,9 @@ class FakeScheduler:
         self.added.append((task, fire_at, is_timer, label))
         return len(self.added)
 
+    def pending(self):
+        return []
+
     async def run(self):
         await asyncio.Event().wait()   # idle like the real tick loop; cancelled on exit
 
@@ -492,3 +495,47 @@ def test_a_fired_reminder_never_cuts_the_user_off_mid_sentence():
     # his reply came first, the reminder second — interrupting, but politely
     assert len(transport.spoken) == 2
     assert "your timer is up" == transport.spoken[-1]
+
+
+def test_asking_about_timers_reports_them_and_creates_nothing():
+    """The query path must never schedule — and must tell her the real list."""
+    from datetime import datetime, timedelta
+
+    class QueryScheduler(FakeScheduler):
+        def __init__(self, items):
+            super().__init__()
+            self._items = items
+
+        def pending(self):
+            return self._items
+
+    class Item:
+        def __init__(self, task, mins):
+            self.task, self.fire_at = task, datetime.now() + timedelta(minutes=mins)
+
+    transport = FakeTransport([WAKE, SPEECH, END])
+    sched = QueryScheduler([Item("go to the gym", 60)])
+    llm = RecordingLLM()
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=SchedulingTranscriber("do I have any timers running?"),
+        llm=llm, synthesizer=TextSynth(), scheduler=sched,
+    )
+    asyncio.run(orch.run())
+
+    assert sched.added == []                       # a question creates nothing
+    hint = " ".join(m.content for m in llm.last_messages if m.role == "system")
+    assert "go to the gym" in hint                 # she was handed the real pending item
+
+
+def test_asking_with_nothing_pending_says_none():
+    transport = FakeTransport([WAKE, SPEECH, END])
+    llm = RecordingLLM()
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=SchedulingTranscriber("any reminders?"),
+        llm=llm, synthesizer=TextSynth(), scheduler=FakeScheduler(),
+    )
+    asyncio.run(orch.run())
+    hint = " ".join(m.content for m in llm.last_messages if m.role == "system")
+    assert "NONE" in hint and "don't invent" in hint

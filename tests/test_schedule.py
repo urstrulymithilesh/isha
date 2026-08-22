@@ -303,3 +303,70 @@ def test_a_hint_matching_several_equally_stays_ambiguous(tmp_path):
     count, reason = sched.cancel("minutes")     # matches both equally
     assert count == 0 and reason == "ambiguous"
     assert len(store.pending()) == 2
+
+
+# -- asking what's pending --------------------------------------------------
+
+
+from isha.schedule.parse import IncompleteCommand, QueryCommand   # noqa: E402
+
+
+def test_query_phrasings_are_recognised():
+    for text in ("do I have any timers running?", "any reminders?",
+                 "what is my timer set for", "when does my timer go off",
+                 "what timers do I have", "is there a timer still running"):
+        assert isinstance(parse_schedule_command(text, now=NOW), QueryCommand), text
+
+
+def test_a_question_about_a_timer_does_not_create_one():
+    """"do I have a timer for 10 minutes?" contains a perfectly good duration."""
+    cmd = parse_schedule_command("do I have a timer for 10 minutes?", now=NOW)
+    assert isinstance(cmd, QueryCommand)
+
+
+def test_query_does_not_fire_on_ordinary_questions():
+    for text in ("do I have time for a coffee", "what did I have for lunch",
+                 "how are you feeling"):
+        assert not isinstance(parse_schedule_command(text, now=NOW), QueryCommand), text
+
+
+def test_query_is_a_pure_lookup(tmp_path):
+    """No model involved in finding the facts — just the table."""
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    assert sched.pending() == []
+    sched.add("go to the gym", NOW + timedelta(hours=1), label="an hour")
+    sched.add("", NOW + timedelta(minutes=5), is_timer=True, label="5 minutes")
+    pending = sched.pending()
+    assert len(pending) == 2
+    assert {p.task or p.label for p in pending} == {"go to the gym", "5 minutes"}
+
+
+def test_cancelled_and_fired_items_drop_out_of_the_query(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("go to the gym", NOW + timedelta(hours=1))
+    sched.add("call mum", NOW + timedelta(hours=2))
+    sched.cancel("gym")
+    assert [p.task for p in sched.pending()] == ["call mum"]
+
+
+# -- a change with no time asks instead of silently doing nothing -----------
+
+
+def test_reschedule_without_a_time_is_flagged_incomplete():
+    cmd = parse_schedule_command("please change the timer", now=NOW)
+    assert isinstance(cmd, IncompleteCommand) and cmd.kind == "reschedule"
+
+
+def test_incomplete_needs_an_explicit_reminder_word():
+    """Guard against ordinary speech: no bare pronouns here, or "I might change it
+    later" would turn into a reminder prompt."""
+    assert parse_schedule_command("I might change it later", now=NOW) is None
+    assert parse_schedule_command("can you change that", now=NOW) is None
+
+
+def test_a_bare_time_alone_is_not_a_command():
+    """We deliberately do NOT slot-fill across turns, so "45 seconds" on its own is
+    just conversation — the reschedule has to be said in one sentence."""
+    assert parse_schedule_command("45 seconds", now=NOW) is None

@@ -39,7 +39,8 @@ from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
-from isha.schedule.parse import (CancelCommand, RescheduleCommand,
+from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
+                                 RescheduleCommand, _phrase_delay,
                                  parse_schedule_command)
 from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
@@ -316,6 +317,27 @@ class Orchestrator:
         cmd = parse_schedule_command(text, now=datetime.now())
         if cmd is None:
             return None
+
+        if isinstance(cmd, QueryCommand):
+            pending = self.scheduler.pending()
+            print(f"  [reminder] asked what's pending: {len(pending)}")
+            if not pending:
+                return ("He asked what timers or reminders he has. There are NONE. Tell him "
+                        "that plainly in one short sentence — don't invent any.")
+            now = datetime.now()
+            listing = "; ".join(
+                f"{p.task or 'a timer'} in {_phrase_delay(max(0, (p.fire_at - now).total_seconds()))}"
+                for p in pending
+            )
+            return (f"He asked what's pending. He has exactly these, and nothing else: {listing}. "
+                    "Say them back naturally in one or two short spoken sentences — no lists, "
+                    "no bullet points, and do NOT invent any others.")
+
+        if isinstance(cmd, IncompleteCommand):
+            print("  [reminder] change requested with no new time — asking him for it")
+            return ("He wants to change a reminder but didn't say what to change it to. Ask "
+                    "him what time he wants, in one short sentence, and mention he can say it "
+                    "all at once like 'change the timer to 45 seconds'.")
 
         if isinstance(cmd, CancelCommand):
             count, reason = self.scheduler.cancel(cmd.hint, all_of_them=cmd.all_of_them)

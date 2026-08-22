@@ -62,6 +62,35 @@ _RESCHEDULE_VERBS = (
 _REMINDER_NOUNS = ("timer", "reminder", "alarm", "countdown", "it", "that", "them", "all of them")
 
 
+# "timer"/"reminder" said outright. The loose pronouns in _REMINDER_NOUNS are fine
+# once a TIME anchors the sentence, but for asking or for an incomplete request there
+# is no anchor — "I might change it later" must not look like a reminder command.
+_EXPLICIT_NOUNS = ("timer", "timers", "reminder", "reminders", "alarm", "alarms", "countdown")
+
+# "do I have any timers", "what's my timer set for", "when does it go off"
+_QUERY_PATTERNS = (
+    "do i have any", "do i have a", "any timers", "any reminders", "what timers",
+    "what reminders", "is there a timer", "are there any", "what's my timer",
+    "whats my timer", "what is my timer", "when does my timer", "when does the timer",
+    "how long is left", "how long left", "how much time is left", "what am i waiting for",
+    "list my", "show my", "check my", "still running", "still going", "what's pending",
+    "whats pending", "what's set", "whats set",
+)
+
+
+@dataclass(frozen=True)
+class QueryCommand:
+    """Ask what's currently pending. Pure lookup — no model needed to find the facts."""
+
+
+@dataclass(frozen=True)
+class IncompleteCommand:
+    """A reschedule with no new time ("change the timer"). We don't slot-fill across
+    turns; she just asks for the missing piece so the request isn't silently dropped."""
+
+    kind: str = "reschedule"
+
+
 @dataclass(frozen=True)
 class CancelCommand:
     """Cancel a pending reminder. `hint` may name which one ("the gym one")."""
@@ -269,6 +298,12 @@ def parse_schedule_command(text: str, *, now: datetime):
         return None
     low = text.lower()
     has_noun = _mentions(text, _REMINDER_NOUNS) is not None
+    has_explicit = _mentions(text, _EXPLICIT_NOUNS) is not None
+
+    # 0. asking what's pending — checked first so "do I have a timer for 10 minutes?"
+    #    is read as a question, not as a request to set one.
+    if has_explicit and _mentions(text, _QUERY_PATTERNS):
+        return QueryCommand()
 
     # 1. cancel
     if has_noun and _mentions(text, _CANCEL_VERBS):
@@ -282,6 +317,10 @@ def parse_schedule_command(text: str, *, now: datetime):
             fire_at, delay, span = found
             return RescheduleCommand(fire_at=fire_at, spoken_delay=delay,
                                      hint=_hint_from(text, drop_spans=[span]))
+        # "change the timer" with no time. Only when the noun is EXPLICIT, so an
+        # ordinary "I might change it later" stays ordinary conversation.
+        if has_explicit:
+            return IncompleteCommand("reschedule")
 
     # 3. otherwise it may be a brand-new timer/reminder
     return parse_schedule_request(text, now=now)
