@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-PENDING, FIRED, DROPPED = "pending", "fired", "dropped"
+PENDING, FIRED, DROPPED, CANCELLED = "pending", "fired", "dropped", "cancelled"
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,14 @@ class SqliteScheduleStore:
                           is_timer=bool(r[3]))
             for r in rows
         ]
+
+    def update_fire_at(self, item_id: int, fire_at: datetime) -> None:
+        """Move an existing reminder instead of creating a second one."""
+        self._conn.execute(
+            "UPDATE reminders SET fire_at = ? WHERE id = ?",
+            (fire_at.isoformat(timespec="seconds"), item_id),
+        )
+        self._conn.commit()
 
     def mark(self, item_id: int, status: str) -> None:
         self._conn.execute("UPDATE reminders SET status = ? WHERE id = ?", (status, item_id))

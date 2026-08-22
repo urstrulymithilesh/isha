@@ -47,6 +47,38 @@ _TRIGGERS = (
 _TIMER_WORDS = ("timer", "alarm")
 
 
+# Cancelling / rescheduling an EXISTING reminder. These must be recognised BEFORE a
+# creation request, because "stop the timer set for 10 minutes" contains a perfectly
+# good "10 minutes" and would otherwise create a second timer instead of removing one.
+_CANCEL_VERBS = (
+    "cancel", "stop", "never mind", "nevermind", "forget", "delete", "remove",
+    "clear", "call off", "scrap", "drop",
+)
+_RESCHEDULE_VERBS = (
+    "change", "make it", "move", "reschedule", "push", "shift", "update", "set it",
+    "adjust", "instead",
+)
+# A reminder-ish noun keeps "stop working at 5" from looking like a cancellation.
+_REMINDER_NOUNS = ("timer", "reminder", "alarm", "countdown", "it", "that", "them", "all of them")
+
+
+@dataclass(frozen=True)
+class CancelCommand:
+    """Cancel a pending reminder. `hint` may name which one ("the gym one")."""
+
+    hint: str = ""
+    all_of_them: bool = False
+
+
+@dataclass(frozen=True)
+class RescheduleCommand:
+    """Move an existing pending reminder to a new time."""
+
+    fire_at: datetime
+    spoken_delay: str
+    hint: str = ""
+
+
 @dataclass(frozen=True)
 class ScheduleRequest:
     task: str            # what to say when it fires ("" for a bare timer)
@@ -151,3 +183,103 @@ def announcement(task: str, *, is_timer: bool, overdue_seconds: float = 0.0) -> 
     if overdue_seconds > 0:
         body += f" — this was due {_phrase_delay(overdue_seconds)} ago, sorry"
     return body
+
+
+def _mentions(text: str, phrases) -> str | None:
+    low = text.lower()
+    for p in phrases:
+        if p in low:
+            return p
+    return None
+
+
+def _hint_from(text: str, *, drop_spans=()) -> str:
+    """Whatever's left after removing command words and the time expression — used to
+    pick WHICH reminder was meant ("cancel the gym one" -> "gym")."""
+    out = text
+    for start, end in sorted(drop_spans, reverse=True):
+        out = out[:start] + " " + out[end:]
+    noise = (list(_CANCEL_VERBS) + list(_RESCHEDULE_VERBS) + list(_REMINDER_NOUNS)
+             + ["the", "my", "a", "an", "to", "for", "please", "can you", "could you",
+                "set", "that was", "which", "one", "isha", "hey", "about", "instead", "of"])
+    low = out.lower()
+    for word in sorted(noise, key=len, reverse=True):
+        low = re.sub(rf"\b{re.escape(word)}\b", " ", low)
+    return re.sub(r"[\s,.!?]+", " ", low).strip(" ,.!?")
+
+
+# A reschedule states the new time loosely: "change it TO 1 minute", or bare
+# "make it 5 minutes instead". No "in/for" prefix required — safe here because a
+# change verb and a reminder noun have already been matched.
+_RELATIVE_LOOSE = re.compile(
+    r"\b(?:to|in|after|for|by)?\s*"
+    r"(?P<half>half\s+(?:an?\s+)?)?"
+    r"(?P<qty>\d+|" + "|".join(sorted(_WORD_NUMBERS, key=len, reverse=True)) + r")?\s*"
+    r"(?P<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?)\b",
+    re.I,
+)
+
+
+# Same idea for clock times: a reschedule says "move it TO 6pm", not "at 6pm".
+_ABSOLUTE_LOOSE = re.compile(
+    r"\b(?:to|at|by|for)?\s*(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*"
+    r"(?P<meridiem>am|pm|a\.m\.|p\.m\.)\b",
+    re.I,
+)
+
+
+def _new_time_from(text: str, *, now: datetime):
+    """Reuse the creation-time matchers to read the NEW time in a reschedule."""
+    rel = _RELATIVE_LOOSE.search(text)
+    qty = _quantity(rel) if rel else None
+    if rel is not None and qty:
+        seconds = qty * _unit_seconds(rel.group("unit"))
+        return now + timedelta(seconds=seconds), _phrase_delay(seconds), rel.span()
+    absol = _ABSOLUTE_LOOSE.search(text)
+    if absol is not None:
+        hour = int(absol.group("hour"))
+        minute = int(absol.group("minute") or 0)
+        mer = (absol.group("meridiem") or "").replace(".", "").lower()
+        if mer == "pm" and hour < 12:
+            hour += 12
+        elif mer == "am" and hour == 12:
+            hour = 0
+        elif not mer and hour < 8:
+            hour += 12
+        if hour > 23 or minute > 59:
+            return None
+        fire_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if fire_at <= now:
+            fire_at += timedelta(days=1)
+        return fire_at, _phrase_delay((fire_at - now).total_seconds()), absol.span()
+    return None
+
+
+def parse_schedule_command(text: str, *, now: datetime):
+    """The single entry point. Returns CancelCommand | RescheduleCommand |
+    ScheduleRequest | None.
+
+    Order matters and is the whole point: a cancellation often names a duration
+    ("stop the timer set for 10 minutes"), so checking "create" first would answer a
+    cancel request by creating another timer — the exact bug this replaces.
+    """
+    if not text or not text.strip():
+        return None
+    low = text.lower()
+    has_noun = _mentions(text, _REMINDER_NOUNS) is not None
+
+    # 1. cancel
+    if has_noun and _mentions(text, _CANCEL_VERBS):
+        every = any(w in low for w in ("all of them", "all the", "everything", "them all"))
+        return CancelCommand(hint=_hint_from(text), all_of_them=every)
+
+    # 2. reschedule — needs a change verb AND a new time to move to
+    if has_noun and _mentions(text, _RESCHEDULE_VERBS):
+        found = _new_time_from(text, now=now)
+        if found is not None:
+            fire_at, delay, span = found
+            return RescheduleCommand(fire_at=fire_at, spoken_delay=delay,
+                                     hint=_hint_from(text, drop_spans=[span]))
+
+    # 3. otherwise it may be a brand-new timer/reminder
+    return parse_schedule_request(text, now=now)

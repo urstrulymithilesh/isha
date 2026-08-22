@@ -224,3 +224,49 @@ def test_unprocessed_skips_an_unpaired_straggler():
     s.append_turn(Message("assistant", "Rex, nice"))
     pending = s.unprocessed_exchanges()
     assert len(pending) == 1 and pending[0][2] == "my dog is Rex"
+
+
+# -- forgetting (the correction path) ---------------------------------------
+
+
+def test_forget_removes_a_fact_and_it_stops_being_recalled():
+    s = _store()
+    s.add_fact(Fact(text="the user lives in Pune", confidence=1.0, subject="location"))
+    s.add_fact(Fact(text="the user's sister is named Anya", confidence=0.9, subject="sister's name"))
+
+    gone = s.forget("Pune")
+    assert len(gone) == 1 and "Pune" in gone[0].text
+    assert [f.subject for f in s.all_facts()] == ["sister's name"]
+    assert all("Pune" not in f.text for f in s.recall("where do I live", k=3))
+
+
+def test_forget_matches_subject_as_well_as_text():
+    s = _store()
+    s.add_fact(Fact(text="the user drinks coffee", confidence=0.9, subject="drink"))
+    assert len(s.forget("drink")) == 1
+    assert s.all_facts() == []
+
+
+def test_forget_is_case_insensitive_and_can_remove_several():
+    s = _store()
+    s.add_fact(Fact(text="the user has a dog named Rex", confidence=0.9, subject="pet_name"))
+    s.add_fact(Fact(text="the user's dog is named Rex", confidence=1.0, subject="dog's name"))
+    assert len(s.forget("rex")) == 2
+    assert s.all_facts() == []
+
+
+def test_forget_with_no_match_changes_nothing():
+    s = _store()
+    s.add_fact(Fact(text="the user drinks coffee", confidence=0.9, subject="drink"))
+    assert s.forget("kangaroo") == []
+    assert len(s.all_facts()) == 1
+
+
+def test_forget_can_remove_a_seeded_fact_too(tmp_path):
+    log = tmp_path / "memory-log.txt"
+    s = _store(log=log)
+    s.add_fact(Fact(text="the user's name is Mithilesh", confidence=1.0,
+                    subject="user's name", origin="core"))
+    gone = s.forget("Mithilesh")
+    assert len(gone) == 1 and gone[0].origin == "core"
+    assert "FORGOT" in log.read_text(encoding="utf-8")   # the deletion is auditable

@@ -108,8 +108,9 @@ def _say_cmd(argv: list[str]) -> int:
 def _memory_cmd(argv: list[str]) -> int:
     """Inspect what Isha has stored (trust/debug).
 
-        python -m isha memory                 # list every stored fact
-        python -m isha memory "my sister"     # semantic recall for a query
+        python -m isha memory                      # list every stored fact
+        python -m isha memory "my sister"          # semantic recall for a query
+        python -m isha memory --forget "Pune"      # delete facts matching that text
     """
     from isha.memory.embedder import FastEmbedEmbedder
     from isha.memory.store import SqliteMemoryStore
@@ -120,7 +121,26 @@ def _memory_cmd(argv: list[str]) -> int:
         print("Talk to Isha with `python -m isha run --ollama` first so she can store things.")
         return 0
 
-    store = SqliteMemoryStore(db, FastEmbedEmbedder())
+    store = SqliteMemoryStore(db, FastEmbedEmbedder(),
+                              log_path=db.parent / "memory-log.txt")
+    if "--forget" in argv:
+        needle = " ".join(argv[argv.index("--forget") + 1:]).strip()
+        if not needle:
+            print('Usage: python -m isha memory --forget "some text or subject"')
+            store.close()
+            return 1
+        gone = store.forget(needle)
+        if not gone:
+            print(f"Nothing matched {needle!r} — nothing deleted.")
+        else:
+            print(f"Forgot {len(gone)} fact(s) matching {needle!r}:")
+            for f in gone:
+                print(f"  - ({f.origin}) [{f.subject}] {f.text}")
+            if any(f.origin in ("core", "self", "self_history") for f in gone):
+                print("\nNote: some were seeded facts — `python -m isha seed` restores those.")
+        store.close()
+        return 0
+
     query = " ".join(a for a in argv if not a.startswith("--")).strip()
     if query:
         hits = store.recall(query, k=CONFIG.memory.recall_k)

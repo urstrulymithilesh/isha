@@ -73,6 +73,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "pretending otherwise",
         True,
     ),
+    ProgressEntry(
+        "v0.8 — she can take things back", "2026-08-22",
+        "her reminders became properly editable: ask her to change one and she moves it "
+        "instead of quietly setting a second, ask her to cancel and it's actually gone, "
+        "and if it's unclear which one you mean she asks rather than guessing. She can "
+        "also forget something she'd remembered wrongly",
+        True,
+    ),
 ]
 
 

@@ -138,6 +138,36 @@ class SqliteMemoryStore:
         self._conn.commit()
         self._log("STORED", fact)
 
+    def forget(self, needle: str) -> list[Fact]:
+        """Delete facts whose subject or text matches `needle` (case-insensitive
+        substring). Returns what was removed, so the caller can report it.
+
+        This is the correction path: extraction sometimes stores something wrong or
+        something that was never true, and being able to take it back matters more
+        than being able to add. Seeded core/self facts can be forgotten too — they
+        come straight back with `python -m isha seed`.
+        """
+        n = needle.strip().lower()
+        if not n:
+            return []
+        rows = self._conn.execute(
+            "SELECT id, subject, text, confidence, source_turn_id, origin FROM facts "
+            "WHERE lower(COALESCE(subject,'')) LIKE ? OR lower(text) LIKE ?",
+            (f"%{n}%", f"%{n}%"),
+        ).fetchall()
+        if not rows:
+            return []
+        gone = [Fact(text=r[2], confidence=r[3], source_turn_id=r[4], subject=r[1], origin=r[5])
+                for r in rows]
+        ids = [r[0] for r in rows]
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(f"DELETE FROM facts WHERE id IN ({placeholders})", ids)
+        self._conn.execute(f"DELETE FROM vec_facts WHERE fact_id IN ({placeholders})", ids)
+        self._conn.commit()
+        for fact in gone:
+            self._log("FORGOT", fact)
+        return gone
+
     def recall(self, query: str, *, k: int = 3, include_history: bool = False) -> list[Fact]:
         """Semantic top-K. Past-version ('self_history') facts are hidden unless
         include_history=True, so they only surface when the user asks about her past."""

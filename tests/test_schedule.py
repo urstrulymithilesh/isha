@@ -158,3 +158,124 @@ def test_startup_reconcile_fires_what_came_due_while_closed(tmp_path):
     assert fired == 1
     assert "gym" in spoken[0] and "20 minutes ago" in spoken[0]
     assert reopened.pending() == []              # closed out, won't repeat
+
+
+# -- cancel / reschedule ----------------------------------------------------
+
+
+from isha.schedule.parse import (CancelCommand, RescheduleCommand,   # noqa: E402
+                                 parse_schedule_command)
+from isha.schedule.scheduler import resolve_target                    # noqa: E402
+
+
+def test_cancel_phrasing_is_not_mistaken_for_a_new_timer():
+    """The reported bug: this used to CREATE a second 10-minute timer."""
+    cmd = parse_schedule_command("can you stop the timer that was set for 10 minutes?", now=NOW)
+    assert isinstance(cmd, CancelCommand)
+
+
+def test_reschedule_phrasing_is_not_mistaken_for_a_new_timer():
+    """The other reported bug: this used to ADD a 1-minute timer alongside the old one."""
+    cmd = parse_schedule_command("change the timer to 1 minute", now=NOW)
+    assert isinstance(cmd, RescheduleCommand)
+    assert cmd.fire_at == NOW + timedelta(minutes=1)
+
+
+def test_various_cancel_and_reschedule_phrasings():
+    for text in ("cancel the timer", "never mind the reminder", "forget the alarm",
+                 "stop the timer"):
+        assert isinstance(parse_schedule_command(text, now=NOW), CancelCommand), text
+    for text in ("make it 5 minutes instead", "move the reminder to 6pm",
+                 "change the timer to 1 minute"):
+        assert isinstance(parse_schedule_command(text, now=NOW), RescheduleCommand), text
+
+
+def test_ordinary_sentences_with_stop_or_change_are_left_alone():
+    for text in ("I need to stop working at 5pm", "I might change jobs in 3 months"):
+        assert not isinstance(parse_schedule_command(text, now=NOW), CancelCommand), text
+
+
+def test_reschedule_moves_the_existing_one_instead_of_adding(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("", NOW + timedelta(minutes=10), is_timer=True)
+
+    item, reason = sched.reschedule(NOW + timedelta(minutes=1))
+    assert reason == "" and item is not None
+    pending = store.pending()
+    assert len(pending) == 1                                   # still exactly one
+    assert pending[0].fire_at == NOW + timedelta(minutes=1)     # at the NEW time
+
+
+def test_cancel_removes_it_and_it_never_fires(tmp_path):
+    store = _store(tmp_path)
+    spoken = []
+    sched = Scheduler(store, spoken.append)
+    sched.add("", NOW, is_timer=True)
+
+    count, reason = sched.cancel()
+    assert count == 1 and reason == ""
+    assert store.pending() == []
+    assert sched.check(now=NOW + timedelta(minutes=5)) == 0     # due, but cancelled
+    assert spoken == []                                        # never announced
+
+
+def test_cancel_with_nothing_pending_says_so(tmp_path):
+    sched = Scheduler(_store(tmp_path), lambda _t: None)
+    count, reason = sched.cancel()
+    assert count == 0 and reason == "none"
+
+
+def test_ambiguous_cancel_refuses_to_guess(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("go to the gym", NOW + timedelta(hours=1))
+    sched.add("call mum", NOW + timedelta(hours=2))
+
+    count, reason = sched.cancel()                 # no hint, two candidates
+    assert count == 0 and reason == "ambiguous"
+    assert len(store.pending()) == 2               # nothing destroyed on a guess
+
+
+def test_a_hint_disambiguates_when_it_matches_one(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("go to the gym", NOW + timedelta(hours=1))
+    sched.add("call mum", NOW + timedelta(hours=2))
+
+    count, reason = sched.cancel("gym")
+    assert count == 1 and reason == ""
+    assert [p.task for p in store.pending()] == ["call mum"]
+
+
+def test_cancel_all_clears_everything(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("go to the gym", NOW + timedelta(hours=1))
+    sched.add("call mum", NOW + timedelta(hours=2))
+
+    count, reason = sched.cancel(all_of_them=True)
+    assert count == 2 and reason == ""
+    assert store.pending() == []
+
+
+def test_ambiguous_reschedule_also_refuses_to_guess(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("go to the gym", NOW + timedelta(hours=1))
+    sched.add("call mum", NOW + timedelta(hours=2))
+
+    item, reason = sched.reschedule(NOW + timedelta(minutes=5))
+    assert item is None and reason == "ambiguous"
+    assert [p.fire_at for p in store.pending()] == [NOW + timedelta(hours=1),
+                                                    NOW + timedelta(hours=2)]
+
+
+def test_resolve_target_rules():
+    from isha.schedule.store import ScheduledItem
+    a = ScheduledItem(1, "go to the gym", NOW, False)
+    b = ScheduledItem(2, "call mum", NOW, False)
+    assert resolve_target([], "") == (None, "none")
+    assert resolve_target([a], "")[0] is a           # only one -> unambiguous
+    assert resolve_target([a, b], "")[1] == "ambiguous"
+    assert resolve_target([a, b], "gym")[0] is a     # hint picks it out

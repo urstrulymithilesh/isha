@@ -39,7 +39,8 @@ from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
-from isha.schedule.parse import parse_schedule_request
+from isha.schedule.parse import (CancelCommand, RescheduleCommand,
+                                 parse_schedule_command)
 from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
 
@@ -251,18 +252,9 @@ class Orchestrator:
             # Timers/reminders: parsed deterministically (no extra LLM round-trip),
             # scheduled immediately, then she confirms it in her own words.
             if self.scheduler is not None:
-                req = parse_schedule_request(text, now=datetime.now())
-                if req is not None:
-                    self.scheduler.add(req.task, req.fire_at, is_timer=req.is_timer)
-                    what = "timer" if req.is_timer else f"reminder to {req.task}"
-                    print(f"  [reminder] set: {what} in {req.spoken_delay} "
-                          f"(fires {req.fire_at:%H:%M:%S})")
-                    extra.append(Message(
-                        "system",
-                        f"You just set a {what} for him, going off in {req.spoken_delay}. "
-                        "Confirm it warmly in one short sentence — no lists, no repeating "
-                        "the exact time back twice.",
-                    ))
+                note = self._handle_schedule_command(text)
+                if note is not None:
+                    extra.append(Message("system", note))
             messages = build_messages(
                 self._system_prompt, facts, self._history,
                 recent_limit=CONFIG.memory.recent_turns,
@@ -311,6 +303,53 @@ class Orchestrator:
             exchange = f"The user said: {user_text}\nYou replied: {reply}"
             self._extract_task = asyncio.create_task(
                 self._extract_facts(exchange, turn_ids=(uid, aid)))
+
+    def _handle_schedule_command(self, text: str) -> str | None:
+        """Create / reschedule / cancel a reminder. Returns a system note telling her
+        what just happened so she confirms it in her own words, or None if this
+        wasn't a scheduling request at all.
+
+        Order is enforced in the parser: cancel and reschedule are recognised BEFORE
+        creation, so "stop the timer set for 10 minutes" cancels instead of quietly
+        setting a second timer.
+        """
+        cmd = parse_schedule_command(text, now=datetime.now())
+        if cmd is None:
+            return None
+
+        if isinstance(cmd, CancelCommand):
+            count, reason = self.scheduler.cancel(cmd.hint, all_of_them=cmd.all_of_them)
+            if reason == "none":
+                return ("He asked you to cancel a reminder, but nothing is pending. "
+                        "Tell him there's nothing to cancel, warmly and briefly.")
+            if reason == "ambiguous":
+                pending = self.scheduler.pending()
+                listing = "; ".join(f"{p.task or 'a timer'} at {p.fire_at:%H:%M}" for p in pending)
+                return (f"He asked to cancel a reminder but has several pending: {listing}. "
+                        "Ask him which one he means — briefly, one sentence.")
+            what = "all of them" if cmd.all_of_them else "it"
+            return (f"You just cancelled {what} ({count} reminder(s)) for him. Confirm in one "
+                    "short sentence.")
+
+        if isinstance(cmd, RescheduleCommand):
+            item, reason = self.scheduler.reschedule(cmd.fire_at, cmd.hint)
+            if reason == "none":
+                return ("He tried to change a reminder, but nothing is pending. Tell him "
+                        "there's nothing set yet, and offer to set one.")
+            if reason == "ambiguous":
+                pending = self.scheduler.pending()
+                listing = "; ".join(f"{p.task or 'a timer'} at {p.fire_at:%H:%M}" for p in pending)
+                return (f"He asked to move a reminder but has several pending: {listing}. "
+                        "Ask him which one he means — briefly.")
+            return (f"You just MOVED his existing reminder (not made a new one) — it now goes "
+                    f"off in {cmd.spoken_delay}. Confirm in one short sentence.")
+
+        # otherwise: a brand-new timer/reminder
+        self.scheduler.add(cmd.task, cmd.fire_at, is_timer=cmd.is_timer)
+        what = "timer" if cmd.is_timer else f"reminder to {cmd.task}"
+        print(f"  [reminder] set: {what} in {cmd.spoken_delay} (fires {cmd.fire_at:%H:%M:%S})")
+        return (f"You just set a {what} for him, going off in {cmd.spoken_delay}. Confirm it "
+                "warmly in one short sentence — no lists, no repeating the time twice.")
 
     async def _catch_up_extractions(self) -> None:
         """Re-run extraction for exchanges that never finished, so a fact taught late

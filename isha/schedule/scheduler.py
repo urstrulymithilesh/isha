@@ -18,7 +18,8 @@ from collections.abc import Callable
 from datetime import datetime
 
 from isha.schedule.parse import announcement
-from isha.schedule.store import DROPPED, FIRED, ScheduledItem, SqliteScheduleStore
+from isha.schedule.store import (CANCELLED, DROPPED, FIRED, ScheduledItem,
+                                 SqliteScheduleStore)
 
 
 def triage(
@@ -50,6 +51,28 @@ def triage(
     return to_fire, to_drop
 
 
+def resolve_target(items: list[ScheduledItem], hint: str = "") -> tuple[ScheduledItem | None, str]:
+    """Pure. Which pending reminder did he mean? -> (item, reason).
+
+    reason is "" on success, else why we can't act: "none" (nothing pending) or
+    "ambiguous" (several, and the hint doesn't single one out). We ASK rather than
+    guess — cancelling the wrong reminder fails silently, and he'd only find out
+    when the one he wanted never fires.
+    """
+    if not items:
+        return None, "none"
+    words = [w for w in hint.lower().split() if len(w) > 2]
+    if words:
+        matched = [i for i in items if any(w in i.task.lower() for w in words)]
+        if len(matched) == 1:
+            return matched[0], ""
+        if len(matched) > 1:
+            return None, "ambiguous"
+    if len(items) == 1:
+        return items[0], ""
+    return None, "ambiguous"
+
+
 class Scheduler:
     def __init__(
         self,
@@ -68,6 +91,33 @@ class Scheduler:
 
     def add(self, task: str, fire_at: datetime, *, is_timer: bool = False) -> int:
         return self._store.add(task, fire_at, is_timer=is_timer)
+
+    def pending(self) -> list[ScheduledItem]:
+        return self._store.pending()
+
+    def cancel(self, hint: str = "", *, all_of_them: bool = False) -> tuple[int, str]:
+        """-> (count cancelled, reason-if-none). Never creates anything."""
+        items = self._store.pending()
+        if all_of_them:
+            for item in items:
+                self._store.mark(item.id, CANCELLED)
+            return len(items), "" if items else "none"
+        target, reason = resolve_target(items, hint)
+        if target is None:
+            return 0, reason
+        self._store.mark(target.id, CANCELLED)
+        print(f"  [reminder] cancelled: {target.task or 'timer'}")
+        return 1, ""
+
+    def reschedule(self, fire_at: datetime, hint: str = "") -> tuple[ScheduledItem | None, str]:
+        """Move an EXISTING reminder. -> (item, reason-if-none)."""
+        items = self._store.pending()
+        target, reason = resolve_target(items, hint)
+        if target is None:
+            return None, reason
+        self._store.update_fire_at(target.id, fire_at)
+        print(f"  [reminder] rescheduled '{target.task or 'timer'}' -> {fire_at:%H:%M:%S}")
+        return target, ""
 
     def check(self, *, now: datetime | None = None) -> int:
         """One reconcile pass: fire what's due, drop what's stale. Returns fired count.
