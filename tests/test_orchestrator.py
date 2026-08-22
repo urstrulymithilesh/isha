@@ -416,3 +416,78 @@ def test_catch_up_is_a_noop_when_nothing_is_pending():
     orch, _t, _s, extractor = _mem_orch([], FACT_JSON)
     asyncio.run(orch.run())
     assert extractor.calls == 0
+
+
+# -- Phase 3: scheduling from speech, respecting preemption -----------------
+
+
+class FakeScheduler:
+    def __init__(self):
+        self.added = []
+
+    def add(self, task, fire_at, *, is_timer=False):
+        self.added.append((task, fire_at, is_timer))
+        return len(self.added)
+
+    async def run(self):
+        await asyncio.Event().wait()   # idle like the real tick loop; cancelled on exit
+
+
+class SchedulingTranscriber:
+    """Feeds a fixed utterance so we can drive the scheduling path."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def transcribe(self, pcm):
+        return self.text
+
+
+def _sched_orch(utterance):
+    transport = FakeTransport([WAKE, SPEECH, END])
+    sched = FakeScheduler()
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=SchedulingTranscriber(utterance),
+        llm=EchoLLM(), synthesizer=TextSynth(), scheduler=sched,
+    )
+    return orch, transport, sched
+
+
+def test_speaking_a_timer_request_schedules_it():
+    orch, _t, sched = _sched_orch("set a timer for 10 minutes")
+    asyncio.run(orch.run())
+    assert len(sched.added) == 1
+    task, fire_at, is_timer = sched.added[0]
+    assert is_timer is True
+
+
+def test_speaking_a_reminder_request_keeps_the_task():
+    orch, _t, sched = _sched_orch("remind me to stretch in 20 minutes")
+    asyncio.run(orch.run())
+    assert len(sched.added) == 1
+    assert "stretch" in sched.added[0][0]
+
+
+def test_ordinary_talk_schedules_nothing():
+    orch, _t, sched = _sched_orch("I had a rough day today")
+    asyncio.run(orch.run())
+    assert sched.added == []
+
+
+def test_a_fired_reminder_never_cuts_the_user_off_mid_sentence():
+    """Preemption rule: notify() during LISTENING is held until she's back at IDLE."""
+    orch, transport, _s = _sched_orch("hello there")
+
+    async def scenario():
+        await orch._handle_frame(WAKE)        # -> LISTENING (he starts talking)
+        orch.notify("your timer is up")       # reminder fires mid-utterance
+        await orch._handle_frame(SPEECH)
+        assert transport.spoken == []         # did NOT talk over him
+        await orch._handle_frame(END)
+        await orch._turn_task
+
+    asyncio.run(scenario())
+    # his reply came first, the reminder second — interrupting, but politely
+    assert len(transport.spoken) == 2
+    assert "your timer is up" == transport.spoken[-1]

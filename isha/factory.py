@@ -64,11 +64,14 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
             CONFIG.memory.db_path, FastEmbedEmbedder(),
             log_path=CONFIG.memory.db_path.parent / "memory-log.txt",
         )
+        from isha.schedule.scheduler import Scheduler
+        from isha.schedule.store import SqliteScheduleStore
         from isha.memory.seed import seed_if_needed
         n = seed_if_needed(store)      # first run: plant core + self facts
         if n:
             print(f"  [memory] seeded {n} core/self facts (first run)")
         extractor = FactExtractor(llm)
+        schedule_store = SqliteScheduleStore(CONFIG.memory.db_path)
     else:
         llm = EchoLLM()
         brain_label = "Echo (Phase 0 stub brain)"
@@ -80,4 +83,12 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
         store=store, extractor=extractor, on_state_change=_print_state,
     )
+    # Scheduler needs the orchestrator's notify(), so it's attached after construction.
+    if use_ollama:
+        orch.scheduler = Scheduler(
+            schedule_store, orch.notify,
+            tick_seconds=CONFIG.schedule.tick_seconds,
+            stale_after_s=CONFIG.schedule.stale_after_minutes * 60,
+            overdue_note_after_s=CONFIG.schedule.overdue_note_after_seconds,
+        )
     return orch, voice_label, brain_label

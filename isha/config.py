@@ -98,12 +98,20 @@ class MemoryConfig:
 
 
 @dataclass(frozen=True)
+class ScheduleConfig:
+    tick_seconds: float = 2.0            # how often due reminders are checked
+    stale_after_minutes: int = 120       # older than this overdue -> dropped, not announced
+    overdue_note_after_seconds: int = 60  # later than this -> she admits how late it is
+
+
+@dataclass(frozen=True)
 class Config:
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     wake: WakeConfig = field(default_factory=WakeConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
 
 
 CONFIG = Config()

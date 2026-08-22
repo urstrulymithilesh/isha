@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from datetime import datetime
 from collections.abc import Callable, Iterator
 
 from isha.core.interfaces import (
@@ -38,6 +39,7 @@ from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE
 from isha.audio.vad import Vad
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
+from isha.schedule.parse import parse_schedule_request
 from isha.reply_style import trim_reflexive_question
 from isha.tts.speech_text import clean_for_speech
 
@@ -99,6 +101,7 @@ class Orchestrator:
         preroll_frames: int = 0,
         store: MemoryStore | None = None,
         extractor: FactExtractor | None = None,
+        scheduler=None,
         on_state_change: Callable[[ConversationState], None] | None = None,
     ) -> None:
         self.transport = transport
@@ -110,6 +113,7 @@ class Orchestrator:
         self.synth = synthesizer
         self.store = store              # None => memory disabled (e.g. Echo brain)
         self.extractor = extractor      # None => no fact extraction
+        self.scheduler = scheduler      # None => timers/reminders disabled
         self._on_state_change = on_state_change
 
         self.state = ConversationState.IDLE
@@ -126,6 +130,7 @@ class Orchestrator:
         self._llm_lock = asyncio.Lock()
         self._extract_task: asyncio.Task[None] | None = None
         self._catchup_task: asyncio.Task[None] | None = None
+        self._scheduler_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
         self._system_prompt = system_prompt
         self._history: list[Message] = []  # conversation turns only; persona + facts added per turn
@@ -140,6 +145,10 @@ class Orchestrator:
         # delays the mic loop.
         if self.store is not None and self.extractor is not None:
             self._catchup_task = asyncio.create_task(self._catch_up_extractions())
+        # Timers/reminders. The loop's first pass IS the startup reconcile: anything
+        # that came due while she was closed (or the laptop slept) fires now.
+        if self.scheduler is not None:
+            self._scheduler_task = asyncio.create_task(self.scheduler.run())
         async for frame in self.transport.capture():
             await self._handle_frame(frame)
             n += 1
@@ -147,6 +156,8 @@ class Orchestrator:
                 break
         if self._turn_task is not None:
             await self._turn_task
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()        # tick loop is infinite; stop it on exit
         for task in (self._catchup_task, self._extract_task):
             if task is not None and not task.done():
                 try:
@@ -237,6 +248,21 @@ class Orchestrator:
             if _asks_what_next(text):
                 extra.append(next_step_nudge())
                 print("  [self] next-step question — deflecting to him")
+            # Timers/reminders: parsed deterministically (no extra LLM round-trip),
+            # scheduled immediately, then she confirms it in her own words.
+            if self.scheduler is not None:
+                req = parse_schedule_request(text, now=datetime.now())
+                if req is not None:
+                    self.scheduler.add(req.task, req.fire_at, is_timer=req.is_timer)
+                    what = "timer" if req.is_timer else f"reminder to {req.task}"
+                    print(f"  [reminder] set: {what} in {req.spoken_delay} "
+                          f"(fires {req.fire_at:%H:%M:%S})")
+                    extra.append(Message(
+                        "system",
+                        f"You just set a {what} for him, going off in {req.spoken_delay}. "
+                        "Confirm it warmly in one short sentence — no lists, no repeating "
+                        "the exact time back twice.",
+                    ))
             messages = build_messages(
                 self._system_prompt, facts, self._history,
                 recent_limit=CONFIG.memory.recent_turns,

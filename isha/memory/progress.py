@@ -65,6 +65,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "picks it back up and finishes remembering the next time she wakes",
         True,
     ),
+    ProgressEntry(
+        "v0.7 — she keeps time", "2026-08-22",
+        "she can hold a timer or a reminder for you now: ask her in passing and she'll "
+        "carry it, then speak up at the right moment without talking over you. It sticks "
+        "even if she's closed and reopened, and if she's late she says so instead of "
+        "pretending otherwise",
+        True,
+    ),
 ]
 
 

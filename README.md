@@ -67,10 +67,13 @@ Working end to end, offline:
   identity facts that conversational extraction cannot overwrite.
 - **Self-awareness** — she can describe her current build, and her mood tracks
   whether real progress was made since the last version.
+- **Timers and reminders** — "set a timer for 10 minutes", "remind me to stretch at
+  5pm". Parsed deterministically (no extra model round-trip), stored with an absolute
+  wall-clock time, and reconciled on wake — so a reminder survives the laptop sleeping
+  or the app restarting, and admits it if it ends up late.
 
-Next: a timers/reminders scheduler. Deferred: GPU acceleration (Ollama's Vulkan
-discovery times out on this GTX 1050, so the LLM runs ~12 tok/s on CPU), a custom
-wake word, and voice cloning.
+Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
+the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
 
 ## Setup
 
