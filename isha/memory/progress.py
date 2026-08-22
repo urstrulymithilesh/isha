@@ -95,6 +95,13 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "— while still keeping genuinely different things apart",
         True,
     ),
+    ProgressEntry(
+        "v1.1 — she can tidy up her own memory", "2026-08-22",
+        "she can now look back over everything she already remembers and spot where she's "
+        "written the same thing down twice, showing you what she'd merge before touching "
+        "anything — and she's careful never to blur together two things that only sound alike",
+        True,
+    ),
 ]
 
 

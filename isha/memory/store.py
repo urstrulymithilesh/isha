@@ -29,6 +29,20 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _may_merge(origin_a: str, origin_b: str) -> bool:
+    """Two SEEDED facts are never merged into each other.
+
+    Similarity alone cannot decide this. Measured on bge-small, "job" vs "job title"
+    (should merge) is 0.843 while "isha's creator" vs "isha's name" (must NOT) is
+    0.885 — they overlap, so no threshold separates them. But seeded facts are
+    hand-authored as deliberately separate entries, which is authoritative in a way a
+    cosine isn't. Without this rule, `isha seed` silently dropped "isha's name" by
+    merging it into "isha's creator". With it, the highest colliding pair that still
+    depends on the threshold is sister's/brother's name at 0.822 — safely under 0.88.
+    """
+    return not (origin_a in PROTECTED_ORIGINS and origin_b in PROTECTED_ORIGINS)
+
+
 class SqliteMemoryStore:
     def __init__(self, db_path: str | Path, embedder: Embedder, *,
                  log_path: str | Path | None = None) -> None:
@@ -78,6 +92,7 @@ class SqliteMemoryStore:
             # already stored. Only turns recorded from now on can go unprocessed.
             self._conn.execute("UPDATE turns SET processed = 1")
         self._conn.commit()
+        self._backfill_subject_vectors()
         # On reopen, recover the embedding dim so the vec table is recreated to match.
         row = self._conn.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
         if row is not None:
@@ -97,6 +112,90 @@ class SqliteMemoryStore:
             self._conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('dim', ?)", (str(dim),))
             self._ensure_vec_table()
             self._conn.commit()
+
+    def _backfill_subject_vectors(self) -> int:
+        """Give subject vectors to facts stored before this feature existed.
+
+        Without this, every pre-existing fact is invisible to subject dedupe — both the
+        retroactive scan AND the forward check, which would silently let a new fact
+        duplicate an old one. Cheap guard: one COUNT, and after the first run there is
+        nothing left to do.
+        """
+        missing = self._conn.execute(
+            "SELECT id, subject FROM facts f WHERE subject IS NOT NULL AND subject != '' "
+            "AND NOT EXISTS (SELECT 1 FROM subject_vectors sv WHERE sv.fact_id = f.id)"
+        ).fetchall()
+        if not missing:
+            return 0
+        vectors = self._embedder.embed([r[1] for r in missing])
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO subject_vectors(fact_id, embedding) VALUES(?, ?)",
+            [(r[0], sqlite_vec.serialize_float32(v)) for r, v in zip(missing, vectors)],
+        )
+        self._conn.commit()
+        return len(missing)
+
+    def duplicate_groups(self) -> list[tuple[Fact, list[tuple[Fact, float]]]]:
+        """Scan what's already stored for near-duplicate subjects. Read-only.
+
+        -> [(keeper, [(duplicate, similarity), ...]), ...]
+
+        The keeper is chosen so a merge can never destroy something important: a seeded
+        core/self fact always wins, then the most recent, then the most confident. A
+        candidate is only compared against the KEEPER, never against another duplicate,
+        so a chain of merely-similar subjects can't transitively collapse into one.
+        """
+        self._backfill_subject_vectors()
+        protected = ",".join(f"'{o}'" for o in sorted(PROTECTED_ORIGINS))
+        rows = self._conn.execute(
+            f"SELECT f.id, f.subject, f.text, f.confidence, f.source_turn_id, f.origin, "
+            f"       sv.embedding "
+            f"FROM facts f JOIN subject_vectors sv ON sv.fact_id = f.id "
+            f"ORDER BY CASE WHEN f.origin IN ({protected}) THEN 0 ELSE 1 END, "
+            f"         f.ts DESC, f.confidence DESC, f.id DESC"
+        ).fetchall()
+
+        def as_fact(r):
+            return Fact(text=r[2], confidence=r[3], source_turn_id=r[4], subject=r[1], origin=r[5])
+
+        groups: list[tuple[Fact, list[tuple[Fact, float]]]] = []
+        self._group_ids: list[tuple[int, list[int]]] = []      # parallel ids, for apply
+        claimed: set[int] = set()
+        for i, keeper in enumerate(rows):
+            if keeper[0] in claimed:
+                continue
+            dups, dup_ids = [], []
+            for other in rows[i + 1:]:
+                if other[0] in claimed:
+                    continue
+                (distance,) = self._conn.execute(
+                    "SELECT vec_distance_cosine(?, ?)", (keeper[6], other[6])
+                ).fetchone()
+                similarity = 1.0 - float(distance)
+                if not _may_merge(keeper[5], other[5]):
+                    continue                       # both seeded: distinct by construction
+                if similarity >= CONFIG.memory.dedupe_subject_similarity:
+                    dups.append((as_fact(other), similarity))
+                    dup_ids.append(other[0])
+                    claimed.add(other[0])
+            if dups:
+                claimed.add(keeper[0])
+                groups.append((as_fact(keeper), dups))
+                self._group_ids.append((keeper[0], dup_ids))
+        return groups
+
+    def merge_duplicates(self) -> int:
+        """Actually apply what duplicate_groups() found. Returns facts removed."""
+        groups = self.duplicate_groups()
+        removed = 0
+        for (keeper, dups), (_keeper_id, dup_ids) in zip(groups, self._group_ids):
+            for (dup, similarity), dup_id in zip(dups, dup_ids):
+                self._conn.execute("DELETE FROM facts WHERE id = ?", (dup_id,))
+                self._drop_vectors([dup_id])
+                self._log(f"MERGED-RETRO({similarity:.2f}->{keeper.subject!r})", dup)
+                removed += 1
+        self._conn.commit()
+        return removed
 
     # -- facts -------------------------------------------------------------
 
@@ -121,11 +220,28 @@ class SqliteMemoryStore:
             return None
         return int(row[0]), str(row[1]), similarity
 
+    def _drop_vectors(self, fact_ids) -> None:
+        """Delete embedding rows for these facts.
+
+        vec_facts is only created once a dimension is known (i.e. after something has
+        been embedded), so on a db holding facts but no embeddings it simply isn't
+        there yet. A missing table means there is nothing to delete, not an error.
+        """
+        ids = list(fact_ids)
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        for table in ("vec_facts", "subject_vectors"):
+            try:
+                self._conn.execute(
+                    f"DELETE FROM {table} WHERE fact_id IN ({placeholders})", ids)
+            except sqlite3.OperationalError:
+                pass
+
     def _write_vectors(self, fact_id: int, text_blob: bytes, subject_blob: bytes | None) -> None:
         cur = self._conn.cursor()
-        cur.execute("DELETE FROM vec_facts WHERE fact_id = ?", (fact_id,))
+        self._drop_vectors([fact_id])
         cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fact_id, text_blob))
-        cur.execute("DELETE FROM subject_vectors WHERE fact_id = ?", (fact_id,))
         if subject_blob is not None:
             cur.execute("INSERT INTO subject_vectors(fact_id, embedding) VALUES(?, ?)",
                         (fact_id, subject_blob))
@@ -168,12 +284,15 @@ class SqliteMemoryStore:
             near = self._near_duplicate_subject(subject_blob)
             if near is not None:
                 fid, existing_origin, similarity = near
-                if existing_origin in PROTECTED_ORIGINS and fact.origin == "conversation":
+                if not _may_merge(existing_origin, fact.origin):
+                    pass          # distinct by construction — fall through and INSERT
+                elif existing_origin in PROTECTED_ORIGINS and fact.origin == "conversation":
                     self._log("PROTECTED", fact)
                     return
-                self._supersede(fid, fact, blob, subject_blob)
-                self._log(f"MERGED({similarity:.2f})", fact)
-                return
+                else:
+                    self._supersede(fid, fact, blob, subject_blob)
+                    self._log(f"MERGED({similarity:.2f})", fact)
+                    return
         else:
             dup = cur.execute(
                 "SELECT id FROM facts WHERE subject IS NULL AND text = ?", (fact.text,)
@@ -216,8 +335,7 @@ class SqliteMemoryStore:
         ids = [r[0] for r in rows]
         placeholders = ",".join("?" * len(ids))
         self._conn.execute(f"DELETE FROM facts WHERE id IN ({placeholders})", ids)
-        self._conn.execute(f"DELETE FROM vec_facts WHERE fact_id IN ({placeholders})", ids)
-        self._conn.execute(f"DELETE FROM subject_vectors WHERE fact_id IN ({placeholders})", ids)
+        self._drop_vectors(ids)
         self._conn.commit()
         for fact in gone:
             self._log("FORGOT", fact)

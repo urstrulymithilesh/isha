@@ -111,6 +111,8 @@ def _memory_cmd(argv: list[str]) -> int:
         python -m isha memory                      # list every stored fact
         python -m isha memory "my sister"          # semantic recall for a query
         python -m isha memory --forget "Pune"      # delete facts matching that text
+        python -m isha memory --dedupe             # PREVIEW near-duplicate merges
+        python -m isha memory --dedupe --apply     # actually merge them
     """
     from isha.memory.embedder import FastEmbedEmbedder
     from isha.memory.store import SqliteMemoryStore
@@ -123,6 +125,32 @@ def _memory_cmd(argv: list[str]) -> int:
 
     store = SqliteMemoryStore(db, FastEmbedEmbedder(),
                               log_path=db.parent / "memory-log.txt")
+    if "--dedupe" in argv:
+        groups = store.duplicate_groups()
+        if not groups:
+            print("No near-duplicate subjects found — nothing to merge.")
+            store.close()
+            return 0
+        total = sum(len(d) for _k, d in groups)
+        apply = "--apply" in argv or "--confirm" in argv
+        print(f"{'MERGING' if apply else 'WOULD MERGE'} {total} fact(s) into "
+              f"{len(groups)} kept fact(s):\n")
+        for keeper, dups in groups:
+            print(f"  KEEP    ({keeper.origin}) [{keeper.subject}] {keeper.text}")
+            for dup, similarity in dups:
+                print(f"  MERGE   ({dup.origin}) [{dup.subject}] {dup.text}")
+                print(f"          ^ subject similarity {similarity:.3f} "
+                      f"(threshold {CONFIG.memory.dedupe_subject_similarity})")
+            print()
+        if not apply:
+            print("Preview only — nothing was changed.")
+            print("Re-run with --apply to merge:  python -m isha memory --dedupe --apply")
+        else:
+            removed = store.merge_duplicates()
+            print(f"Merged away {removed} fact(s). Logged to memory-log.txt.")
+        store.close()
+        return 0
+
     if "--forget" in argv:
         needle = " ".join(argv[argv.index("--forget") + 1:]).strip()
         if not needle:

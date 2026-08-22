@@ -373,3 +373,84 @@ def test_forget_clears_the_subject_vector_too():
     assert s.all_facts() == []
     left = s._conn.execute("SELECT COUNT(*) FROM subject_vectors").fetchone()[0]
     assert left == 0
+
+
+# -- retroactive dedupe (isha memory --dedupe) ------------------------------
+
+
+def test_dedupe_preview_finds_a_real_duplicate_and_changes_nothing():
+    s = _dedupe_store([BIRTHDAY])
+    # inserted directly so both survive, mimicking facts stored before dedupe existed
+    for subject, text in [("birthday_month", "the user is born in November"),
+                          ("birthday month", "the user's birthday month is November")]:
+        s._conn.execute(
+            "INSERT INTO facts(subject, text, confidence, source_turn_id, ts, origin) "
+            "VALUES(?, ?, 1.0, NULL, '2026-01-01', 'conversation')", (subject, text))
+    s._conn.commit()
+
+    groups = s.duplicate_groups()               # preview only
+    assert len(groups) == 1
+    keeper, dups = groups[0]
+    assert len(dups) == 1 and dups[0][1] >= 0.88
+    assert len(s.all_facts()) == 2              # DRY RUN: nothing removed
+
+
+def test_dedupe_apply_merges_and_keeps_one():
+    s = _dedupe_store([BIRTHDAY])
+    for subject, text in [("birthday_month", "the user is born in November"),
+                          ("birthday month", "the user's birthday month is November")]:
+        s._conn.execute(
+            "INSERT INTO facts(subject, text, confidence, source_turn_id, ts, origin) "
+            "VALUES(?, ?, 1.0, NULL, '2026-01-01', 'conversation')", (subject, text))
+    s._conn.commit()
+
+    removed = s.merge_duplicates()
+    assert removed == 1
+    assert len(s.all_facts()) == 1
+
+
+def test_dedupe_never_merges_a_false_positive_pair():
+    """sister's/brother's name score 0.822 on the real model — under the 0.88 bar."""
+    s = _dedupe_store([])
+    s.add_fact(Fact(text="the user's sister is named Anya", confidence=0.9,
+                    subject="sister's name"))
+    s.add_fact(Fact(text="the user's brother is named Bob", confidence=0.9,
+                    subject="brother's name"))
+    assert s.duplicate_groups() == []
+    assert s.merge_duplicates() == 0
+    assert len(s.all_facts()) == 2
+
+
+def test_two_seeded_facts_are_never_merged_into_each_other():
+    """The bug this rule exists for: "isha's creator" and "isha's name" score 0.885,
+    over the threshold, and seeding silently lost "isha's name"."""
+    s = _dedupe_store([("isha's creator", "isha's name")])   # forced to look identical
+    s.add_fact(Fact(text="Isha was created by Mithilesh", confidence=1.0,
+                    subject="isha's creator", origin="core"))
+    s.add_fact(Fact(text="the AI companion's name is Isha", confidence=1.0,
+                    subject="isha's name", origin="core"))
+
+    assert len(s.all_facts()) == 2, "two seeded facts must never collapse"
+    assert s.duplicate_groups() == []
+    assert s.merge_duplicates() == 0
+
+
+def test_seeding_twice_keeps_every_seeded_fact():
+    from isha.memory.seed import all_seed_facts, seed
+    s = _dedupe_store([])
+    seed(s)
+    seed(s)
+    assert len(s.all_facts()) == len(all_seed_facts())
+
+
+def test_dedupe_backfills_subject_vectors_for_legacy_facts():
+    """Facts stored before subject vectors existed were invisible to dedupe."""
+    s = _dedupe_store([])
+    s._conn.execute(
+        "INSERT INTO facts(subject, text, confidence, source_turn_id, ts, origin) "
+        "VALUES('drink', 'the user drinks coffee', 1.0, NULL, '2026-01-01', 'conversation')")
+    s._conn.commit()
+    assert s._conn.execute("SELECT COUNT(*) FROM subject_vectors").fetchone()[0] == 0
+
+    s.duplicate_groups()
+    assert s._conn.execute("SELECT COUNT(*) FROM subject_vectors").fetchone()[0] == 1
