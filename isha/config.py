@@ -93,6 +93,13 @@ class MemoryConfig:
                                         # persona + facts + history well under num_ctx (4096)
     min_fact_confidence: float = 0.6    # gate out low-confidence extracted facts
     catch_up_limit: int = 5             # max unfinished exchanges re-extracted at startup
+    # Two facts whose SUBJECTS are this similar are treated as the same slot, so the
+    # newer one supersedes instead of both persisting ("birthday_month" vs "birthday
+    # month"). Measured cosines on bge-small: birthday_month/birthday month 0.953,
+    # dog's name/pet_name 0.903 — but sister's name/brother's name is 0.822 and MUST
+    # NOT merge, so the bar sits above that. Deliberately conservative: a missed merge
+    # leaves a harmless duplicate, a wrong merge destroys a real fact.
+    dedupe_subject_similarity: float = 0.88
     debug_extraction: bool = False       # print the exchange + raw LLM output + parse result
                                         # each extraction (temporary, for trust/debugging)
 

@@ -88,6 +88,13 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "something without saying what to, she asks instead of quietly doing nothing",
         True,
     ),
+    ProgressEntry(
+        "v1.0 — she stops repeating herself", "2026-08-22",
+        "her memory got tidier: when she learns something she already knows in slightly "
+        "different words, she updates what she has instead of keeping two versions of it "
+        "— while still keeping genuinely different things apart",
+        True,
+    ),
 ]
 
 

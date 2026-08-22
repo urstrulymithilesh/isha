@@ -3,26 +3,55 @@ plus extraction-output rejection. All with a fake deterministic embedder and an
 in-memory (or tmp-file) SQLite — no fastembed model, no mic, no LLM.
 """
 
+import zlib
+
 from isha.core.interfaces import Fact, Message
 from isha.memory.extraction import parse_extracted_facts
 from isha.memory.store import SqliteMemoryStore
 
 
+IDENTITY_DIMS = 16
+IDENTITY_WEIGHT = 0.7
+
+
 class FakeEmbedder:
     """Deterministic keyword embedding so recall is predictable in tests.
-    Topic dims: [sister, drink, gym, bias]. Same topic -> near vector."""
+
+    Topic dims [sister, drink, gym, bias] drive recall: sharing a topic keeps two
+    vectors close. The trailing identity dims give each DISTINCT string its own small
+    orthogonal component, so two unrelated subjects ("pet_name" vs "dog's name") don't
+    come out perfectly identical and get merged by subject dedupe. crc32, not hash(),
+    because hash() is salted per process and would make these tests flaky.
+    """
 
     def _vec(self, t: str) -> list[float]:
         t = t.lower()
-        return [
+        topic = [
             1.0 if "sister" in t else 0.0,
             1.0 if ("coffee" in t or "tea" in t or "drink" in t) else 0.0,
             1.0 if ("gym" in t or "workout" in t) else 0.0,
             1.0,  # bias keeps every vector non-zero
         ]
+        identity = [0.0] * IDENTITY_DIMS
+        identity[zlib.crc32(t.encode()) % IDENTITY_DIMS] = IDENTITY_WEIGHT
+        return topic + identity
 
     def embed(self, texts):
         return [self._vec(t) for t in texts]
+
+
+class SubjectEmbedder(FakeEmbedder):
+    """Treats listed strings as the SAME slot, for exercising near-duplicate merging
+    without depending on a real model."""
+
+    def __init__(self, synonyms=()):
+        self._canon = {}
+        for group in synonyms:
+            for word in group:
+                self._canon[word.lower()] = group[0].lower()
+
+    def _vec(self, t: str) -> list[float]:
+        return super()._vec(self._canon.get(t.lower(), t))
 
 
 def _store(tmp_path=None, log=None):
@@ -270,3 +299,77 @@ def test_forget_can_remove_a_seeded_fact_too(tmp_path):
     gone = s.forget("Mithilesh")
     assert len(gone) == 1 and gone[0].origin == "core"
     assert "FORGOT" in log.read_text(encoding="utf-8")   # the deletion is auditable
+
+
+# -- near-duplicate subjects (semantic dedupe) ------------------------------
+
+
+def _dedupe_store(synonyms):
+    return SqliteMemoryStore(":memory:", SubjectEmbedder(synonyms))
+
+
+BIRTHDAY = ("birthday month", "birthday_month")
+
+
+def test_near_duplicate_subjects_merge_instead_of_both_persisting():
+    """The reported bug: birthday_month and birthday month were two separate facts."""
+    s = _dedupe_store([BIRTHDAY])
+    s.add_fact(Fact(text="the user is born in November", confidence=1.0,
+                    subject="birthday_month"))
+    s.add_fact(Fact(text="the user's birthday month is November", confidence=1.0,
+                    subject="birthday month"))
+
+    facts = s.all_facts()
+    assert len(facts) == 1, [f.subject for f in facts]
+    assert facts[0].text == "the user's birthday month is November"   # newer wins
+    assert facts[0].subject == "birthday month"
+
+
+def test_merged_fact_is_recalled_once_not_twice():
+    s = _dedupe_store([BIRTHDAY])
+    s.add_fact(Fact(text="the user is born in November", confidence=1.0, subject="birthday_month"))
+    s.add_fact(Fact(text="the user's birthday month is November", confidence=1.0,
+                    subject="birthday month"))
+    hits = s.recall("when is my birthday", k=5)
+    assert len(hits) == 1
+
+
+def test_genuinely_different_subjects_stay_separate():
+    """sister's name vs brother's name score 0.822 on the real model — close, but they
+    must never merge, or a real fact is destroyed."""
+    s = _dedupe_store([])            # no synonyms: these are distinct slots
+    s.add_fact(Fact(text="the user's sister is named Anya", confidence=0.9,
+                    subject="sister's name"))
+    s.add_fact(Fact(text="the user's brother is named Bob", confidence=0.9,
+                    subject="brother's name"))
+    assert len(s.all_facts()) == 2
+
+
+def test_a_conversational_near_duplicate_cannot_overwrite_a_core_fact():
+    s = _dedupe_store([("user's name", "the user's name")])
+    s.add_fact(Fact(text="the user's name is Mithilesh", confidence=1.0,
+                    subject="user's name", origin="core"))
+    s.add_fact(Fact(text="the user's name is Bob", confidence=0.9,
+                    subject="the user's name"))          # near-dup subject, conversational
+    facts = s.all_facts()
+    assert len(facts) == 1
+    assert "Mithilesh" in facts[0].text and facts[0].origin == "core"
+
+
+def test_a_merge_is_written_to_the_memory_log(tmp_path):
+    log = tmp_path / "memory-log.txt"
+    s = SqliteMemoryStore(str(tmp_path / "m.db"), SubjectEmbedder([BIRTHDAY]), log_path=log)
+    s.add_fact(Fact(text="the user is born in November", confidence=1.0, subject="birthday_month"))
+    s.add_fact(Fact(text="the user's birthday month is November", confidence=1.0,
+                    subject="birthday month"))
+    assert "MERGED" in log.read_text(encoding="utf-8")
+
+
+def test_forget_clears_the_subject_vector_too():
+    """A stale subject vector would keep matching after its fact was deleted."""
+    s = _dedupe_store([])
+    s.add_fact(Fact(text="the user drinks coffee", confidence=0.9, subject="drink"))
+    s.forget("coffee")
+    assert s.all_facts() == []
+    left = s._conn.execute("SELECT COUNT(*) FROM subject_vectors").fetchone()[0]
+    assert left == 0

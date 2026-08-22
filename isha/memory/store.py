@@ -21,6 +21,7 @@ from pathlib import Path
 
 import sqlite_vec
 
+from isha.config import CONFIG
 from isha.core.interfaces import PROTECTED_ORIGINS, Embedder, Fact, Message
 
 
@@ -59,6 +60,11 @@ class SqliteMemoryStore:
                 confidence REAL, source_turn_id INTEGER, ts TEXT,
                 origin TEXT NOT NULL DEFAULT 'conversation');
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+            -- Subject embeddings, for catching near-duplicate slots. A plain table,
+            -- not a vec0 index: there are tens of facts, so a scan with
+            -- vec_distance_cosine is simpler and exact.
+            CREATE TABLE IF NOT EXISTS subject_vectors(
+                fact_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
             """
         )
         # Migrate a db created before the `processed` column existed.
@@ -94,10 +100,53 @@ class SqliteMemoryStore:
 
     # -- facts -------------------------------------------------------------
 
+    def _near_duplicate_subject(self, subject_blob: bytes) -> tuple[int, str, float] | None:
+        """The closest existing fact whose SUBJECT means the same thing.
+
+        Matching on the subject, not the fact text, is deliberate: subjects are slot
+        names ("birthday month"), so similarity means "same slot, spelled differently".
+        Fact text would be far more dangerous — "the user likes coffee" and "the user
+        hates coffee" score 0.844, and merging those would keep the wrong one.
+        """
+        row = self._conn.execute(
+            "SELECT f.id, f.origin, vec_distance_cosine(sv.embedding, ?) AS d "
+            "FROM subject_vectors sv JOIN facts f ON f.id = sv.fact_id "
+            "ORDER BY d LIMIT 1",
+            (subject_blob,),
+        ).fetchone()
+        if row is None:
+            return None
+        similarity = 1.0 - float(row[2])
+        if similarity < CONFIG.memory.dedupe_subject_similarity:
+            return None
+        return int(row[0]), str(row[1]), similarity
+
+    def _write_vectors(self, fact_id: int, text_blob: bytes, subject_blob: bytes | None) -> None:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM vec_facts WHERE fact_id = ?", (fact_id,))
+        cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fact_id, text_blob))
+        cur.execute("DELETE FROM subject_vectors WHERE fact_id = ?", (fact_id,))
+        if subject_blob is not None:
+            cur.execute("INSERT INTO subject_vectors(fact_id, embedding) VALUES(?, ?)",
+                        (fact_id, subject_blob))
+
+    def _supersede(self, fact_id: int, fact: Fact, text_blob: bytes,
+                   subject_blob: bytes | None) -> None:
+        self._conn.execute(
+            "UPDATE facts SET subject=?, text=?, confidence=?, source_turn_id=?, ts=?, origin=? "
+            "WHERE id=?",
+            (fact.subject, fact.text, fact.confidence, fact.source_turn_id, _now(),
+             fact.origin, fact_id),
+        )
+        self._write_vectors(fact_id, text_blob, subject_blob)
+        self._conn.commit()
+
     def add_fact(self, fact: Fact) -> None:
         emb = self._embedder.embed([fact.text])[0]
         self._set_dim(len(emb))
         blob = sqlite_vec.serialize_float32(emb)
+        subject_blob = (sqlite_vec.serialize_float32(self._embedder.embed([fact.subject])[0])
+                        if fact.subject else None)
         cur = self._conn.cursor()
 
         if fact.subject:
@@ -111,14 +160,19 @@ class SqliteMemoryStore:
                 if existing_origin in PROTECTED_ORIGINS and fact.origin == "conversation":
                     self._log("PROTECTED", fact)
                     return
-                cur.execute(  # last-write-wins on the subject
-                    "UPDATE facts SET text=?, confidence=?, source_turn_id=?, ts=?, origin=? WHERE id=?",
-                    (fact.text, fact.confidence, fact.source_turn_id, _now(), fact.origin, fid),
-                )
-                cur.execute("DELETE FROM vec_facts WHERE fact_id = ?", (fid,))
-                cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fid, blob))
-                self._conn.commit()
+                self._supersede(fid, fact, blob, subject_blob)   # last-write-wins
                 self._log("UPDATED", fact)
+                return
+
+            # No exact subject match — is there a subject that MEANS the same thing?
+            near = self._near_duplicate_subject(subject_blob)
+            if near is not None:
+                fid, existing_origin, similarity = near
+                if existing_origin in PROTECTED_ORIGINS and fact.origin == "conversation":
+                    self._log("PROTECTED", fact)
+                    return
+                self._supersede(fid, fact, blob, subject_blob)
+                self._log(f"MERGED({similarity:.2f})", fact)
                 return
         else:
             dup = cur.execute(
@@ -134,7 +188,7 @@ class SqliteMemoryStore:
             (fact.subject, fact.text, fact.confidence, fact.source_turn_id, _now(), fact.origin),
         )
         fid = cur.lastrowid
-        cur.execute("INSERT INTO vec_facts(fact_id, embedding) VALUES(?, ?)", (fid, blob))
+        self._write_vectors(fid, blob, subject_blob)
         self._conn.commit()
         self._log("STORED", fact)
 
@@ -163,6 +217,7 @@ class SqliteMemoryStore:
         placeholders = ",".join("?" * len(ids))
         self._conn.execute(f"DELETE FROM facts WHERE id IN ({placeholders})", ids)
         self._conn.execute(f"DELETE FROM vec_facts WHERE fact_id IN ({placeholders})", ids)
+        self._conn.execute(f"DELETE FROM subject_vectors WHERE fact_id IN ({placeholders})", ids)
         self._conn.commit()
         for fact in gone:
             self._log("FORGOT", fact)
