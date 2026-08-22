@@ -87,7 +87,16 @@ pip install -r requirements.txt
 ollama pull qwen2.5:3b
 # Her voice (~60MB, offline after this):
 python -m piper.download_voices en_US-amy-medium --download-dir models
+# Her ears — the wake-word models (~10MB, offline after this):
+python -c "import openwakeword.utils as u; u.download_models()"
 ```
+
+Those three downloads are the only time Isha touches the network. After them she
+runs entirely offline — pull your ethernet cable and she still works.
+
+> **Note:** the wake-word models install *inside* the virtualenv, so if you ever
+> delete and rebuild `.venv` you need to re-run that last command. `python spike.py`
+> checks for them and tells you if they're missing.
 
 Then talk to her:
 

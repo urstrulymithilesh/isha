@@ -109,11 +109,23 @@ def check_faster_whisper(wav: Path | None) -> None:
 
 def check_wakeword() -> None:
     try:
-        import openwakeword  # type: ignore # noqa: F401
+        import openwakeword  # type: ignore
         import onnxruntime  # type: ignore
-        row("openWakeWord + onnx", OK, f"onnxruntime {onnxruntime.__version__}")
     except ImportError as e:
         row("openWakeWord + onnx", BAD, f"missing: {e.name}")
+        return
+    row("openWakeWord + onnx", OK, f"onnxruntime {onnxruntime.__version__}")
+    # The models are a RUNTIME download into site-packages, not a pip dependency —
+    # so a fresh clone (or a rebuilt venv) has the package but no models, and the
+    # app crashes at the first wake check. Catch that here instead.
+    models = Path(openwakeword.__file__).parent / "resources" / "models"
+    wanted = f"{CONFIG.wake.model}_v0.1.onnx"
+    if (models / wanted).is_file():
+        row("wake-word models", OK, f"{CONFIG.wake.model} present")
+    else:
+        row("wake-word models", BAD,
+            "not downloaded — run: python -c \"import openwakeword.utils as u; "
+            "u.download_models()\"")
 
 
 def check_audio() -> None:
