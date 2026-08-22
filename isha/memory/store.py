@@ -52,7 +52,8 @@ class SqliteMemoryStore:
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS turns(
-                id INTEGER PRIMARY KEY, role TEXT, content TEXT, ts TEXT);
+                id INTEGER PRIMARY KEY, role TEXT, content TEXT, ts TEXT,
+                processed INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS facts(
                 id INTEGER PRIMARY KEY, subject TEXT, text TEXT NOT NULL,
                 confidence REAL, source_turn_id INTEGER, ts TEXT,
@@ -60,6 +61,16 @@ class SqliteMemoryStore:
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        # Migrate a db created before the `processed` column existed.
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(turns)").fetchall()}
+        if "processed" not in cols:
+            self._conn.execute(
+                "ALTER TABLE turns ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+            # Turns that predate this feature are treated as already handled: we can't
+            # know whether they were extracted, and re-chewing an old backlog would burn
+            # ~7s per exchange at every startup for facts that are almost certainly
+            # already stored. Only turns recorded from now on can go unprocessed.
+            self._conn.execute("UPDATE turns SET processed = 1")
         self._conn.commit()
         # On reopen, recover the embedding dim so the vec table is recreated to match.
         row = self._conn.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
@@ -177,6 +188,40 @@ class SqliteMemoryStore:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def unprocessed_exchanges(self, *, limit: int = 5) -> list[tuple[int, int, str, str]]:
+        """Turn pairs whose fact-extraction never completed (cancelled, or app quit).
+
+        Returns (user_turn_id, assistant_turn_id, user_text, assistant_text), oldest
+        first. This is what makes a taught fact survive: turns are persisted BEFORE
+        extraction runs, so anything the extractor missed can be picked up later.
+        Turns are always written as a user+assistant pair; an unpaired straggler is
+        skipped (it can never form an exchange, and skipping costs only a SELECT).
+        """
+        rows = self._conn.execute(
+            "SELECT id, role, content FROM turns WHERE processed = 0 ORDER BY id"
+        ).fetchall()
+        out: list[tuple[int, int, str, str]] = []
+        i = 0
+        while i < len(rows) - 1 and len(out) < limit:
+            a, b = rows[i], rows[i + 1]
+            if a[1] == "user" and b[1] == "assistant":
+                out.append((a[0], b[0], a[2], b[2]))
+                i += 2
+            else:
+                i += 1
+        return out
+
+    def mark_processed(self, turn_ids) -> None:
+        """Flag turns as extracted so the same exchange is never extracted twice."""
+        ids = list(turn_ids)
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(
+            f"UPDATE turns SET processed = 1 WHERE id IN ({placeholders})", ids
+        )
+        self._conn.commit()
 
     def all_facts(self) -> list[Fact]:
         """Every stored fact, oldest first — for inspection/debugging (isha memory)."""

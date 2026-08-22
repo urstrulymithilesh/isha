@@ -58,6 +58,13 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "about growing",
         True,
     ),
+    ProgressEntry(
+        "v0.6 — memory she doesn't drop", "2026-08-21",
+        "her memory became dependable: if something interrupts her while she's committing "
+        "a new fact — you start talking again, or close her — she no longer loses it. She "
+        "picks it back up and finishes remembering the next time she wakes",
+        True,
+    ),
 ]
 
 

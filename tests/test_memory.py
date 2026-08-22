@@ -183,3 +183,44 @@ def test_seed_plants_protected_facts_and_is_idempotent():
     assert seed(s) > 0
     assert any(f.origin == "core" and "Isha" in f.text for f in s.all_facts())
     assert seed_if_needed(s) == 0  # core facts already present -> no-op
+
+
+# -- unprocessed-exchange tracking (extraction retry) -----------------------
+
+
+def test_unprocessed_exchanges_pairs_user_and_assistant():
+    s = _store()
+    s.append_turn(Message("user", "my dog is Rex"))
+    s.append_turn(Message("assistant", "Rex, nice"))
+    pending = s.unprocessed_exchanges()
+    assert len(pending) == 1
+    uid, aid, utext, atext = pending[0]
+    assert utext == "my dog is Rex" and atext == "Rex, nice" and uid < aid
+
+
+def test_mark_processed_means_never_extracted_twice():
+    s = _store()
+    uid = s.append_turn(Message("user", "my dog is Rex"))
+    aid = s.append_turn(Message("assistant", "Rex, nice"))
+    assert len(s.unprocessed_exchanges()) == 1
+    s.mark_processed((uid, aid))
+    assert s.unprocessed_exchanges() == []      # idempotent: gone for good
+
+
+def test_unprocessed_respects_limit_and_ordering():
+    s = _store()
+    for i in range(4):
+        s.append_turn(Message("user", f"fact {i}"))
+        s.append_turn(Message("assistant", f"reply {i}"))
+    pending = s.unprocessed_exchanges(limit=2)
+    assert len(pending) == 2
+    assert pending[0][2] == "fact 0" and pending[1][2] == "fact 1"   # oldest first
+
+
+def test_unprocessed_skips_an_unpaired_straggler():
+    s = _store()
+    s.append_turn(Message("assistant", "orphan reply"))   # no user turn before it
+    s.append_turn(Message("user", "my dog is Rex"))
+    s.append_turn(Message("assistant", "Rex, nice"))
+    pending = s.unprocessed_exchanges()
+    assert len(pending) == 1 and pending[0][2] == "my dog is Rex"

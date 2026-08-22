@@ -125,6 +125,7 @@ class Orchestrator:
         # gap as a background task and is cancelled the instant a new turn begins.
         self._llm_lock = asyncio.Lock()
         self._extract_task: asyncio.Task[None] | None = None
+        self._catchup_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
         self._system_prompt = system_prompt
         self._history: list[Message] = []  # conversation turns only; persona + facts added per turn
@@ -134,6 +135,11 @@ class Orchestrator:
     async def run(self, *, max_frames: int | None = None) -> None:
         """Consume mic frames until the transport ends (or max_frames, for tests)."""
         n = 0
+        # Catch up on any exchange whose extraction was cut short last time (you spoke
+        # again, or quit, inside the extraction window). Backgrounded so it never
+        # delays the mic loop.
+        if self.store is not None and self.extractor is not None:
+            self._catchup_task = asyncio.create_task(self._catch_up_extractions())
         async for frame in self.transport.capture():
             await self._handle_frame(frame)
             n += 1
@@ -141,11 +147,12 @@ class Orchestrator:
                 break
         if self._turn_task is not None:
             await self._turn_task
-        if self._extract_task is not None and not self._extract_task.done():
-            try:
-                await self._extract_task     # let a final idle-gap extraction finish
-            except asyncio.CancelledError:
-                pass
+        for task in (self._catchup_task, self._extract_task):
+            if task is not None and not task.done():
+                try:
+                    await task               # let a final idle-gap extraction finish
+                except asyncio.CancelledError:
+                    pass
 
     def notify(self, text: str) -> None:
         """A fired timer/reminder. disposition_for() governs WHEN it's spoken;
@@ -184,8 +191,9 @@ class Orchestrator:
     def _begin_listening(self) -> None:
         # A new interaction takes priority: cancel any pending idle-gap extraction so it
         # can't compete with the coming reply. Best-effort — a lost extraction is fine.
-        if self._extract_task is not None and not self._extract_task.done():
-            self._extract_task.cancel()
+        for task in (self._extract_task, self._catchup_task):
+            if task is not None and not task.done():
+                task.cancel()   # safe now: the turn stays unprocessed and is retried later
         # Seed the turn with the pre-roll so the start of the sentence (spoken during
         # the wake word's detection latency) is included. Do NOT flush here — flushing
         # would drop exactly those queued start-of-speech frames.
@@ -271,17 +279,33 @@ class Orchestrator:
         memory isn't wired). Called after a reply is spoken, so we're back at IDLE."""
         if self.store is None:
             return
-        self.store.append_turn(Message("user", user_text))
-        self.store.append_turn(Message("assistant", reply))
+        uid = self.store.append_turn(Message("user", user_text))
+        aid = self.store.append_turn(Message("assistant", reply))
         if self.extractor is not None:
             exchange = f"The user said: {user_text}\nYou replied: {reply}"
-            self._extract_task = asyncio.create_task(self._extract_facts(exchange))
+            self._extract_task = asyncio.create_task(
+                self._extract_facts(exchange, turn_ids=(uid, aid)))
 
-    async def _extract_facts(self, exchange: str) -> None:
+    async def _catch_up_extractions(self) -> None:
+        """Re-run extraction for exchanges that never finished, so a fact taught late
+        at night is captured next time she starts instead of being lost."""
+        assert self.store is not None
+        pending = self.store.unprocessed_exchanges(limit=CONFIG.memory.catch_up_limit)
+        if not pending:
+            return
+        print(f"  [memory] catching up on {len(pending)} unfinished extraction(s) "
+              "from earlier…")
+        for uid, aid, user_text, reply in pending:
+            exchange = f"The user said: {user_text}\nYou replied: {reply}"
+            await self._extract_facts(exchange, turn_ids=(uid, aid), catchup=True)
+
+    async def _extract_facts(self, exchange: str, *, turn_ids=(),
+                             catchup: bool = False) -> None:
         assert self.store is not None and self.extractor is not None
         debug = CONFIG.memory.debug_extraction
         try:
-            print("  [memory] extracting… (stay silent ~7s; don't speak or quit yet)")
+            print("  [memory] catching up on an earlier exchange…" if catchup
+                  else "  [memory] extracting…")
             async with self._llm_lock:          # never overlaps a live reply on Ollama
                 if self.state is not ConversationState.IDLE:
                     print("  [memory] skipped — a new turn started before extraction could run")
@@ -296,13 +320,16 @@ class Orchestrator:
                       + "; ".join(f"{f.subject}={f.text!r}" for f in facts))
             for fact in facts:
                 self.store.add_fact(fact)        # sync CPU embed; on the loop thread
+            # Extraction COMPLETED (facts or not) -> never redo this exchange.
+            self.store.mark_processed(turn_ids)
             if facts:
                 print("  [memory] stored " + "; ".join(f.subject or f.text[:30] for f in facts))
             else:
                 print("  [memory] nothing to store — no durable facts found in that exchange")
         except asyncio.CancelledError:
-            print("  [memory] extraction CANCELLED — you started a new turn before it finished; "
-                  "that fact was NOT saved. Next time wait for '[memory] stored'.")
+            # Left unprocessed ON PURPOSE: picked up by catch-up next time she starts.
+            print("  [memory] extraction interrupted — saved for later; she'll pick it up "
+                  "next time you open her.")
             raise
         except Exception as e:                   # noqa: BLE001 - extraction is best-effort
             print(f"  [extraction failed] {type(e).__name__}: {e}")

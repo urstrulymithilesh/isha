@@ -215,6 +215,8 @@ class FakeStore:
         self.facts = []
         self.turns = []
         self.recall_facts = []   # what recall() returns (set per test)
+        self.processed = set()   # turn ids whose extraction completed
+        self.pending = []        # exchanges unprocessed_exchanges() hands back
 
     def add_fact(self, f):
         self.facts.append(f)
@@ -228,6 +230,12 @@ class FakeStore:
 
     def recent(self, *, limit=20):
         return []
+
+    def mark_processed(self, ids):
+        self.processed.update(ids)
+
+    def unprocessed_exchanges(self, *, limit=5):
+        return self.pending[:limit]
 
 
 class RecordingLLM:
@@ -341,3 +349,70 @@ def test_alert_during_listening_waits_until_after_reply():
     asyncio.run(scenario())
     # reply first, alert second — never cut the user off
     assert transport.spoken == ["I heard you say: hello world", "gym at 5pm"]
+
+
+# -- extraction survives interruption (turn marked processed only on completion) ----
+
+
+def _mem_orch(frames, extractor_out="[]"):
+    """An orchestrator wired to fake memory, like the other extraction tests."""
+    transport = FakeTransport(frames)
+    store = FakeStore()
+    extractor = FakeExtractor(extractor_out)
+    orch = Orchestrator(
+        transport=transport, wake=FakeWake(WAKE), stopword=FakeWake(STOP),
+        vad=FakeVad(), transcriber=FakeTranscriber(), llm=EchoLLM(), synthesizer=TextSynth(),
+        store=store, extractor=extractor,
+    )
+    return orch, transport, store, extractor
+
+
+FACT_JSON = '[{"subject":"dog","text":"the user has a dog named Rex","confidence":0.9}]'
+
+
+def test_completed_extraction_marks_its_turns_processed():
+    orch, _t, store, _e = _mem_orch([WAKE, SPEECH, END], FACT_JSON)
+    asyncio.run(orch.run())
+    # both turns of the exchange are flagged, so it is never re-extracted
+    assert store.processed == {1, 2}
+    assert len(store.facts) == 1
+
+
+def test_cancelled_extraction_leaves_turns_unprocessed():
+    orch, _t, store, _e = _mem_orch([], FACT_JSON)
+
+    async def scenario():
+        started = asyncio.Event()
+
+        def slow_extract(exchange):
+            started.set()
+            raise AssertionError("should be cancelled before running")
+
+        orch.extractor.extract = slow_extract
+        task = asyncio.create_task(orch._extract_facts("x", turn_ids=(1, 2)))
+        await asyncio.sleep(0)      # let it reach the await point
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    # nothing marked -> the exchange stays queued for the next catch-up
+    assert store.processed == set()
+    assert store.facts == []
+
+
+def test_catch_up_extracts_a_pending_exchange_at_startup():
+    orch, _t, store, extractor = _mem_orch([], FACT_JSON)
+    store.pending = [(1, 2, "my dog is Rex", "Rex, nice name")]
+    asyncio.run(orch.run())          # no frames; catch-up still runs
+    assert extractor.calls == 1
+    assert len(store.facts) == 1 and "Rex" in store.facts[0].text
+    assert store.processed == {1, 2}  # now flagged, so it won't repeat
+
+
+def test_catch_up_is_a_noop_when_nothing_is_pending():
+    orch, _t, _s, extractor = _mem_orch([], FACT_JSON)
+    asyncio.run(orch.run())
+    assert extractor.calls == 0

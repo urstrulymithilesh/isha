@@ -92,7 +92,8 @@ class MemoryConfig:
     context_char_budget: int = 2400     # cap on the recent-turns tail (~600 tokens); keeps
                                         # persona + facts + history well under num_ctx (4096)
     min_fact_confidence: float = 0.6    # gate out low-confidence extracted facts
-    debug_extraction: bool = True       # print the exchange + raw LLM output + parse result
+    catch_up_limit: int = 5             # max unfinished exchanges re-extracted at startup
+    debug_extraction: bool = False       # print the exchange + raw LLM output + parse result
                                         # each extraction (temporary, for trust/debugging)
 
 
