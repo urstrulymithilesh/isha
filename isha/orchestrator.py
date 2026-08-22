@@ -20,6 +20,7 @@ for Piper (or Echo for Ollama) a factory change, not a rewrite.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import deque
 from datetime import datetime
 from collections.abc import Callable, Iterator
@@ -43,6 +44,7 @@ from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
                                  RescheduleCommand, _phrase_delay,
                                  parse_schedule_command)
 from isha.reply_style import trim_reflexive_question
+from isha.tts.sentences import split_complete_sentences
 from isha.tts.speech_text import clean_for_speech
 
 # Phrases that mean "tell me about your PAST self" — only then do we surface her
@@ -52,6 +54,10 @@ _PAST_PATTERNS = (
     "your past", "earlier version", "older version", "back then", "in the beginning",
     "when you started", "how you started", "how far you", "come a long way",
 )
+
+
+# Queue sentinel: generation has ended (distinct from any real sentence).
+_GENERATION_DONE = object()
 
 
 def _asks_about_past(text: str) -> bool:
@@ -262,11 +268,10 @@ class Orchestrator:
                 char_budget=CONFIG.memory.context_char_budget,
                 extra_system=extra,
             )
-            reply = await self._think(messages)
-            reply = trim_reflexive_question(reply, keep_rate=CONFIG.reasoning.question_keep_rate)
-            self._history.append(Message("assistant", reply))
-            await self._speak(reply)
-            self._remember_turn(text, reply)
+            reply = await self._think_and_speak(messages)
+            if reply:                      # empty if he cut her off before a word landed
+                self._history.append(Message("assistant", reply))
+                self._remember_turn(text, reply)
         except Exception as e:  # noqa: BLE001 - a failed turn must never hang "thinking"
             # LLMError, TTS failure, transcription error — surface it, don't stall.
             print(f"  [turn failed] {type(e).__name__}: {e}")
@@ -282,14 +287,118 @@ class Orchestrator:
             await self._drain_alerts()
 
     async def _think(self, messages: list[Message]) -> str:
-        # EchoLLM is instant; a real streaming LLM runs off-thread so the ingest
-        # loop stays responsive. The lock guarantees a reply and a background
-        # extraction never hit Ollama at the same time.
+        """Generate the whole reply before returning. Kept for callers that want text
+        rather than speech; the live turn uses _think_and_speak instead."""
         def collect() -> str:
             return "".join(self.llm.chat(messages, stream=True)).strip()
 
         async with self._llm_lock:
             return await asyncio.to_thread(collect)
+
+    async def _think_and_speak(self, messages: list[Message]) -> str:
+        """Generate and speak at the same time, and return what was actually said.
+
+        The model is a BLOCKING generator, so it runs in a worker thread that pushes
+        finished sentences onto an asyncio.Queue; the loop here drains that queue and
+        plays each one. Sentence two is being written while sentence one is in the air,
+        which is the whole point — the wait drops from "the entire reply" to "the first
+        sentence".
+
+        The last sentence is HELD back. trim_reflexive_question can only judge a
+        trailing question once it knows the reply is finished, and by then a streamed
+        sentence would already have been spoken. So we keep a one-sentence lookahead:
+        everything before the end plays immediately, and the final sentence waits for
+        generation to end before it's judged and then spoken or dropped.
+
+        The LLM lock is held across the whole thing, including waiting for the producer
+        to stop. That keeps the guarantee memory extraction relies on: it can never hit
+        Ollama while a reply is still being generated.
+        """
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def put(item) -> None:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+            except RuntimeError:
+                pass                       # loop already closed (aborted run)
+
+        failure: BaseException | None = None
+
+        def produce() -> None:
+            nonlocal failure
+            buffer = ""
+            try:
+                for token in self.llm.chat(messages, stream=True):
+                    if self._interrupt.is_set():
+                        break              # stop generating the moment he cuts in
+                    buffer += token
+                    ready, buffer = split_complete_sentences(buffer)
+                    for sentence in ready:
+                        put(sentence)
+                tail = buffer.strip()
+                if tail and not self._interrupt.is_set():
+                    put(tail)
+            except BaseException as e:      # noqa: BLE001 - re-raised on the loop below
+                # A brain failure happens in this worker thread now, so it has to be
+                # carried back out or the turn would fail SILENTLY instead of apologising.
+                failure = e
+            finally:
+                put(_GENERATION_DONE)
+
+        spoken: list[str] = []
+        held: str | None = None
+        self._interrupt.clear()
+        async with self._llm_lock:
+            producer = asyncio.create_task(asyncio.to_thread(produce))
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is _GENERATION_DONE:
+                        break
+                    if held is not None:               # held is definitely not the last
+                        await self._speak_sentence(held)
+                        spoken.append(held)
+                        if self._interrupt.is_set():
+                            held = None
+                            break
+                    held = item
+
+                if held is not None and not self._interrupt.is_set():
+                    full = " ".join([*spoken, held])
+                    kept = trim_reflexive_question(
+                        full, keep_rate=CONFIG.reasoning.question_keep_rate)
+                    if kept.rstrip().endswith(held.strip()):
+                        await self._speak_sentence(held)
+                        spoken.append(held)
+                    else:
+                        print("  [reply] trimmed a reflexive trailing question")
+            finally:
+                with contextlib.suppress(Exception):
+                    await producer         # hold the lock until generation really stops
+                self._finish_speaking()
+        if failure is not None:
+            raise failure                  # let _run_turn surface it and apologise
+        return " ".join(spoken).strip()
+
+    async def _speak_sentence(self, text: str) -> None:
+        """Play one sentence, entering SPEAKING on the first one only."""
+        text = clean_for_speech(text)
+        if not text:
+            return
+        if self.state is not ConversationState.SPEAKING:
+            self._enter(ConversationState.SPEAKING)
+            self.transport.mute_input()    # half-duplex holds for the whole reply
+        await self.transport.play(
+            self._interruptible(self.synth.synthesize(text)),
+            sample_rate=self.synth.sample_rate,
+        )
+
+    def _finish_speaking(self) -> None:
+        """Always run, interrupted or not: unmute, flush the echo tail, back to idle."""
+        self.transport.unmute_input()
+        if self.state is not ConversationState.IDLE:
+            self._enter(ConversationState.IDLE)
 
     # -- memory ------------------------------------------------------------
 

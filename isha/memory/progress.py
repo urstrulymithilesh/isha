@@ -102,6 +102,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "anything — and she's careful never to blur together two things that only sound alike",
         True,
     ),
+    ProgressEntry(
+        "v1.2 — she stopped making you wait", "2026-08-22",
+        "she starts talking as soon as her first sentence is ready instead of composing "
+        "the whole answer in silence first — the pause before she speaks dropped from "
+        "about eleven seconds to four on a long reply. You can still cut her off at any "
+        "point, and she stops mid-thought when you do",
+        True,
+    ),
 ]
 
 
