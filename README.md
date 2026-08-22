@@ -11,30 +11,6 @@ clean interface — not a rewrite.
 
 > Full design + engineering-review record: **[DESIGN.md](DESIGN.md)**.
 
-## Demo
-
-<!--
-  DROP YOUR RECORDINGS IN HERE:
-    1. Create a `docs/` folder in the repo root.
-    2. Put the silent GIF at        docs/demo.gif   (GitHub autoplays GIFs inline)
-    3. Put the MP4 with audio at    docs/demo.mp4   (linked below; GitHub won't
-       autoplay a committed MP4, so it's a click-through)
-    4. Delete this comment block.
-
-  Tip: to get an MP4 that plays INLINE on GitHub, open any issue in your repo,
-  drag the .mp4 into the comment box, and GitHub uploads it and gives you a
-  user-images URL. Paste that URL here on its own line and it renders as a
-  player. (Don't submit the issue - you only need the generated link.)
--->
-
-![Isha: wake word, local reply, and memory that survives a restart](docs/demo.gif)
-
-*Everything above runs on one laptop with no network: wake word, speech-to-text,
-a local LLM, and a real voice.*
-
-**[▶ Watch with audio (MP4)](docs/demo.mp4)** — her voice is half the point, and
-the GIF is silent.
-
 ## Architecture at a glance
 
 ```
