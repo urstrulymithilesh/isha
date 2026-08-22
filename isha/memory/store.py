@@ -311,6 +311,20 @@ class SqliteMemoryStore:
         self._conn.commit()
         self._log("STORED", fact)
 
+    def find_facts(self, needle: str) -> list[Fact]:
+        """Facts matching `needle`, WITHOUT deleting. Deletion is destructive, so the
+        caller previews first and only removes when exactly one thing fits."""
+        n = needle.strip().lower()
+        if not n:
+            return []
+        rows = self._conn.execute(
+            "SELECT subject, text, confidence, source_turn_id, origin FROM facts "
+            "WHERE lower(COALESCE(subject,'')) LIKE ? OR lower(text) LIKE ?",
+            (f"%{n}%", f"%{n}%"),
+        ).fetchall()
+        return [Fact(text=r[1], confidence=r[2], source_turn_id=r[3], subject=r[0],
+                     origin=r[4]) for r in rows]
+
     def forget(self, needle: str) -> list[Fact]:
         """Delete facts whose subject or text matches `needle` (case-insensitive
         substring). Returns what was removed, so the caller can report it.

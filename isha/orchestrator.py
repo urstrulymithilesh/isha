@@ -40,6 +40,7 @@ from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
+from isha.memory.forget_parse import parse_forget_command
 from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
                                  RescheduleCommand, _phrase_delay,
                                  parse_schedule_command)
@@ -289,7 +290,14 @@ class Orchestrator:
                 print("  [self] next-step question — deflecting to him")
             # Timers/reminders: parsed deterministically (no extra LLM round-trip),
             # scheduled immediately, then she confirms it in her own words.
-            if self.scheduler is not None:
+            # Forget FIRST: the reminder parser treats "forget" + "that" as cancelling
+            # a reminder, which would swallow "forget that my favourite colour is blue".
+            # parse_forget_command bows out whenever an explicit timer/reminder word is
+            # present, so the two never fight over the same sentence.
+            forget_note = self._handle_forget_command(text)
+            if forget_note is not None:
+                extra.append(Message("system", forget_note))
+            elif self.scheduler is not None:
                 note = self._handle_schedule_command(text)
                 if note is not None:
                     extra.append(Message("system", note))
@@ -452,6 +460,44 @@ class Orchestrator:
             exchange = f"The user said: {user_text}\nYou replied: {reply}"
             self._extract_task = asyncio.create_task(
                 self._extract_facts(exchange, turn_ids=(uid, aid)))
+
+    def _handle_forget_command(self, text: str) -> str | None:
+        """Actually delete what he asked her to forget, and tell her what happened so
+        she confirms truthfully. Returns None when this wasn't a forget request.
+
+        She used to agree out loud while the fact stayed in the database. Agreeing
+        without acting is worse than refusing, because he stops checking.
+        """
+        if self.store is None:
+            return None
+        cmd = parse_forget_command(text)
+        if cmd is None:
+            return None
+
+        if not cmd.target:
+            print("  [memory] forget request with no subject — asking which")
+            return ("He asked you to forget something but didn't say what. Ask him which "
+                    "thing he means, in one short sentence. Do NOT claim you've forgotten "
+                    "anything yet — nothing has been deleted.")
+
+        matches = self.store.find_facts(cmd.target)
+        if not matches:
+            print(f"  [memory] nothing stored matching {cmd.target!r}")
+            return (f"He asked you to forget {cmd.target!r}, but you have nothing stored "
+                    "matching that. Say so plainly and briefly — don't pretend to delete "
+                    "something that was never there.")
+
+        if len(matches) > 1:
+            listing = "; ".join(f.text for f in matches[:4])
+            print(f"  [memory] {len(matches)} facts match {cmd.target!r} — asking which")
+            return (f"He asked you to forget {cmd.target!r}, but several things match: "
+                    f"{listing}. Ask him which one — briefly. Nothing has been deleted yet.")
+
+        gone = self.store.forget(cmd.target)
+        removed = "; ".join(f.text for f in gone)
+        print(f"  [memory] FORGOT: {removed}")
+        return (f"You just permanently deleted this from your memory: {removed}. It is "
+                "really gone. Confirm in one short sentence.")
 
     def _handle_schedule_command(self, text: str) -> str | None:
         """Create / reschedule / cancel a reminder. Returns a system note telling her

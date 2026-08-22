@@ -128,6 +128,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "her from remembering things",
         True,
     ),
+    ProgressEntry(
+        "v1.5 — she stopped interviewing you", "2026-08-22",
+        "she has opinions of her own now and actually reacts to what you said instead of "
+        "handing a question back every time — she went from ending seven replies out of "
+        "eight with a question to one. She also properly forgets things when you ask her "
+        "to, rather than saying she will and quietly keeping them",
+        True,
+    ),
 ]
 
 

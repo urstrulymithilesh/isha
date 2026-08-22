@@ -427,7 +427,7 @@ def test_two_seeded_facts_are_never_merged_into_each_other():
     s = _dedupe_store([("isha's creator", "isha's name")])   # forced to look identical
     s.add_fact(Fact(text="Isha was created by Mithilesh", confidence=1.0,
                     subject="isha's creator", origin="core"))
-    s.add_fact(Fact(text="the AI companion's name is Isha", confidence=1.0,
+    s.add_fact(Fact(text="the AI partner's name is Isha", confidence=1.0,
                     subject="isha's name", origin="core"))
 
     assert len(s.all_facts()) == 2, "two seeded facts must never collapse"

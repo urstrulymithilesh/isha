@@ -16,7 +16,7 @@ from isha.config import CONFIG
 
 
 def _status() -> int:
-    print(f"Isha v{__version__} — fully-local voice companion")
+    print(f"Isha v{__version__} — fully-local voice partner")
     print(f"  reasoning : {CONFIG.reasoning.model} via {CONFIG.reasoning.ollama_host}")
     print(f"  stt       : faster-whisper {CONFIG.speech.whisper_model} ({CONFIG.speech.whisper_compute_type}, CPU)")
     print(f"  wake/stop : {CONFIG.wake.model} / {CONFIG.wake.stop_word}")

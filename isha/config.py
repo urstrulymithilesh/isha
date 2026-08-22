@@ -28,14 +28,14 @@ class ReasoningConfig:
     # confabulate around an injected fact). 7b grounds far better but ~15s/reply + ~15s
     # extraction is too much dead time to iterate through. Swap back to "qwen2.5:7b" (or a
     # better model / GPU) later — this is exactly the swap the LLM interface was built for.
-    model: str = "qwen2.5:3b"
+    model: str = "llama3.2"
     keep_alive: int = -1                # keep the model resident in VRAM (Ollama: int -1 = forever; "-1" string is rejected)
     num_ctx: int = 4096                 # cap KV/context so Windows-reserved VRAM doesn't OOM the 4GB
     temperature: float = 0.6            # 0.8 made her over-improvise (question every turn);
                                         # 0.6 follows the persona's "don't always ask" rule better
     # Fraction of the time a reflexive trailing question is KEPT (rest are trimmed by
     # reply_style). 0 = always trim, 1 = never trim. The 3B asks too much on its own.
-    question_keep_rate: float = 0.4
+    question_keep_rate: float = 0.15
     request_timeout: int = 90           # seconds; CPU generation is slow, but this bounds a hang
 
 

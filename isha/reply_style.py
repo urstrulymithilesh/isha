@@ -7,7 +7,7 @@ on the end. A reply that is ONLY a question (e.g. a genuine "what's your sister'
 name?", or a recall answer she's checking) is left untouched.
 
 `question_keep_rate` keeps the trailing question some of the time so she still asks
-now and then — a companion who NEVER asks is as odd as one who always does.
+now and then — someone who NEVER asks is as odd as one who always does.
 """
 
 from __future__ import annotations

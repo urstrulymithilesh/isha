@@ -1,6 +1,6 @@
 # Isha
 
-A **fully-local, offline voice AI companion**. No cloud APIs, no cloud costs, no
+A **fully-local, offline voice AI partner**. No cloud APIs, no cloud costs, no
 data ever leaves the machine. Say a wake word, talk to her, and she replies in
 voice — and she *remembers* you across sessions.
 
@@ -39,7 +39,7 @@ Working end to end, offline:
 - **Memory** — SQLite + `sqlite-vec` semantic recall with CPU embeddings. Facts are
   extracted in the idle gap after a reply and survive restarts; an interrupted
   extraction is retried on next start rather than lost.
-- **Personality** — a warm companion persona (not an assistant voice), plus seeded
+- **Personality** — a warm, opinionated persona (not an assistant voice), plus seeded
   identity facts that conversational extraction cannot overwrite.
 - **Self-awareness** — she can describe her current build, and her mood tracks
   whether real progress was made since the last version.

@@ -10,7 +10,7 @@ Mode: Builder
 
 ## Problem Statement
 
-Build **Isha**: a personal AI companion that runs **entirely on the user's own
+Build **Isha**: a personal AI partner that runs **entirely on the user's own
 machine** — no cloud APIs, no cloud cost, no data leaving the device, fully
 offline-capable. At the computer you talk to her by voice; she has a warm,
 girlfriend-like personality; she **remembers** the user across sessions (routine,
@@ -26,7 +26,7 @@ an architecture that lets bigger models drop in later without a rewrite.
   whole "AI girlfriend that lives on your laptop and knows you" fantasy, actually
   self-hosted. Strong, unusual portfolio story.
 - **She remembers you.** Persistent memory (structured facts + semantic recall)
-  is the difference between "a chatbot" and "a companion." This is the demo beat
+  is the difference between "a chatbot" and "someone who knows you." This is the demo beat
   that makes people lean in.
 - **She multitasks in real time.** "Boil water for 10 minutes" runs in the
   background and she interrupts *only* when it's done — while the conversation
@@ -132,7 +132,7 @@ drop-in adapter here if remote access ever justifies relaxing the privacy line.
 ## Approaches Considered
 
 ### Approach A: Brain first, voice later — *(not chosen)*
-Text companion (LLM + memory + tools) first, add voice in phase 2. Lower risk but
+Text-only (LLM + memory + tools) first, add voice in phase 2. Lower risk but
 less flashy early, and the user prioritized the demoable voice experience.
 
 ### Approach B: Voice Companion + Memory — **CHOSEN**
@@ -154,7 +154,7 @@ integration risk for a first runnable version. Becomes the v2 headline feature.
 4. "Set a 10-minute timer" → conversation continues normally → she interrupts to
    announce it **exactly when it fires**, then resumes.
 5. "Remind me at 5pm to go to the gym" → she announces it by voice at 5pm.
-6. Personality is consistently warm/companion-like across turns (system prompt +
+6. Personality is consistently warm/partner-like across turns (system prompt +
    persona file), not a generic assistant tone.
 7. Runs with **no network connection** — provable by pulling the ethernet/wifi.
 
