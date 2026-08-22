@@ -11,6 +11,30 @@ clean interface — not a rewrite.
 
 > Full design + engineering-review record: **[DESIGN.md](DESIGN.md)**.
 
+## Demo
+
+<!--
+  DROP YOUR RECORDINGS IN HERE:
+    1. Create a `docs/` folder in the repo root.
+    2. Put the silent GIF at        docs/demo.gif   (GitHub autoplays GIFs inline)
+    3. Put the MP4 with audio at    docs/demo.mp4   (linked below; GitHub won't
+       autoplay a committed MP4, so it's a click-through)
+    4. Delete this comment block.
+
+  Tip: to get an MP4 that plays INLINE on GitHub, open any issue in your repo,
+  drag the .mp4 into the comment box, and GitHub uploads it and gives you a
+  user-images URL. Paste that URL here on its own line and it renders as a
+  player. (Don't submit the issue - you only need the generated link.)
+-->
+
+![Isha: wake word, local reply, and memory that survives a restart](docs/demo.gif)
+
+*Everything above runs on one laptop with no network: wake word, speech-to-text,
+a local LLM, and a real voice.*
+
+**[▶ Watch with audio (MP4)](docs/demo.mp4)** — her voice is half the point, and
+the GIF is silent.
+
 ## Architecture at a glance
 
 ```
@@ -29,25 +53,49 @@ int8), speaks (Piper), and embeds. Nothing contends for the 4GB.
 **Stack (all free / local):** Ollama + Qwen2.5-3B · faster-whisper · Piper ·
 openWakeWord + Silero VAD · SQLite + sqlite-vec · custom asyncio orchestrator.
 
-## Status: Phase 0 (walking skeleton)
+## Status
 
-The interfaces and the preemption state machine are defined; the pipeline isn't
-wired yet. Current step is proving the hardware + install on the real machine.
+Working end to end, offline:
+
+- **Voice loop** — wake word -> speech-to-text -> local LLM -> speech, on a custom
+  asyncio preemption state machine (idle / listening / thinking / speaking) with
+  stop-word barge-in and half-duplex mic gating.
+- **Memory** — SQLite + `sqlite-vec` semantic recall with CPU embeddings. Facts are
+  extracted in the idle gap after a reply and survive restarts; an interrupted
+  extraction is retried on next start rather than lost.
+- **Personality** — a warm companion persona (not an assistant voice), plus seeded
+  identity facts that conversational extraction cannot overwrite.
+- **Self-awareness** — she can describe her current build, and her mood tracks
+  whether real progress was made since the last version.
+
+Next: a timers/reminders scheduler. Deferred: GPU acceleration (Ollama's Vulkan
+discovery times out on this GTX 1050, so the LLM runs ~12 tok/s on CPU), a custom
+wake word, and voice cloning.
 
 ## Setup
 
-Use **Python 3.11 or 3.12** (some ML wheels lag on 3.13).
+Python **3.11-3.13** (3.13.2 is what this is developed on; every wheel resolves).
+You also need [Ollama](https://ollama.com) installed and running.
 
 ```bash
-py -3.12 -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-ollama pull qwen2.5:3b-instruct
-# Download a Piper voice (used for real speech; ~60MB, offline after this):
-python -m piper.download_voices en_US-lessac-medium --download-dir models
+ollama pull qwen2.5:3b
+# Her voice (~60MB, offline after this):
+python -m piper.download_voices en_US-amy-medium --download-dir models
 ```
 
-## Run the Phase 0 spike (do this first)
+Then talk to her:
+
+```bash
+python -m isha run --ollama          # add --device N to pick a specific mic
+```
+
+Useful extras: `python -m isha memory` (inspect what she remembers),
+`python -m isha devices` (list mics), `python -m isha say "text"` (test her voice).
+
+## Verify your setup (the spike)
 
 Proves the hardware round-trip and clears the Windows install landmines. It runs
 even before you've installed everything — it reports what's missing.
