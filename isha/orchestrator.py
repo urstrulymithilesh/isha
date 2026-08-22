@@ -332,7 +332,8 @@ class Orchestrator:
                     "short sentence.")
 
         if isinstance(cmd, RescheduleCommand):
-            item, reason = self.scheduler.reschedule(cmd.fire_at, cmd.hint)
+            item, reason = self.scheduler.reschedule(cmd.fire_at, cmd.hint,
+                                                     label=cmd.spoken_delay)
             if reason == "none":
                 return ("He tried to change a reminder, but nothing is pending. Tell him "
                         "there's nothing set yet, and offer to set one.")
@@ -345,7 +346,8 @@ class Orchestrator:
                     f"off in {cmd.spoken_delay}. Confirm in one short sentence.")
 
         # otherwise: a brand-new timer/reminder
-        self.scheduler.add(cmd.task, cmd.fire_at, is_timer=cmd.is_timer)
+        self.scheduler.add(cmd.task, cmd.fire_at, is_timer=cmd.is_timer,
+                           label=cmd.spoken_delay)
         what = "timer" if cmd.is_timer else f"reminder to {cmd.task}"
         print(f"  [reminder] set: {what} in {cmd.spoken_delay} (fires {cmd.fire_at:%H:%M:%S})")
         return (f"You just set a {what} for him, going off in {cmd.spoken_delay}. Confirm it "

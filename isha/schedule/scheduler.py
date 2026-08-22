@@ -61,12 +61,19 @@ def resolve_target(items: list[ScheduledItem], hint: str = "") -> tuple[Schedule
     """
     if not items:
         return None, "none"
-    words = [w for w in hint.lower().split() if len(w) > 2]
+    # Keep digits (so "10" survives) and words long enough to be meaningful.
+    words = [w for w in hint.lower().split() if w.isdigit() or len(w) > 2]
     if words:
-        matched = [i for i in items if any(w in i.task.lower() for w in words)]
-        if len(matched) == 1:
-            return matched[0], ""
-        if len(matched) > 1:
+        # Score against the task AND how it was described ("the 10 minute one"), because
+        # a bare timer has no task text. Scoring beats any-match: "10 minutes" hits both
+        # "10 minutes" and "5 minutes" on the word "minutes", but only one scores twice.
+        scored = [(sum(1 for w in words if w in f"{i.task} {i.label}".lower()), i)
+                  for i in items]
+        best = max((n for n, _ in scored), default=0)
+        if best > 0:
+            winners = [i for n, i in scored if n == best]
+            if len(winners) == 1:
+                return winners[0], ""
             return None, "ambiguous"
     if len(items) == 1:
         return items[0], ""
@@ -89,8 +96,9 @@ class Scheduler:
         self._stale_after_s = stale_after_s
         self._overdue_note_after_s = overdue_note_after_s
 
-    def add(self, task: str, fire_at: datetime, *, is_timer: bool = False) -> int:
-        return self._store.add(task, fire_at, is_timer=is_timer)
+    def add(self, task: str, fire_at: datetime, *, is_timer: bool = False,
+            label: str = "") -> int:
+        return self._store.add(task, fire_at, is_timer=is_timer, label=label)
 
     def pending(self) -> list[ScheduledItem]:
         return self._store.pending()
@@ -109,13 +117,14 @@ class Scheduler:
         print(f"  [reminder] cancelled: {target.task or 'timer'}")
         return 1, ""
 
-    def reschedule(self, fire_at: datetime, hint: str = "") -> tuple[ScheduledItem | None, str]:
+    def reschedule(self, fire_at: datetime, hint: str = "",
+                   *, label: str | None = None) -> tuple[ScheduledItem | None, str]:
         """Move an EXISTING reminder. -> (item, reason-if-none)."""
         items = self._store.pending()
         target, reason = resolve_target(items, hint)
         if target is None:
             return None, reason
-        self._store.update_fire_at(target.id, fire_at)
+        self._store.update_fire_at(target.id, fire_at, label=label)
         print(f"  [reminder] rescheduled '{target.task or 'timer'}' -> {fire_at:%H:%M:%S}")
         return target, ""
 

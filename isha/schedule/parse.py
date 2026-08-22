@@ -122,6 +122,8 @@ def _clean_task(text: str, *, spans: list[tuple[int, int]]) -> str:
 
 
 def _phrase_delay(seconds: float) -> str:
+    if seconds == 60:
+        return "a minute"          # she SAYS this; "in 60 seconds" sounds robotic
     if seconds < 90:
         return f"{int(round(seconds))} seconds"
     minutes = seconds / 60

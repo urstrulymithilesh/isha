@@ -425,8 +425,8 @@ class FakeScheduler:
     def __init__(self):
         self.added = []
 
-    def add(self, task, fire_at, *, is_timer=False):
-        self.added.append((task, fire_at, is_timer))
+    def add(self, task, fire_at, *, is_timer=False, label=""):
+        self.added.append((task, fire_at, is_timer, label))
         return len(self.added)
 
     async def run(self):
@@ -458,8 +458,9 @@ def test_speaking_a_timer_request_schedules_it():
     orch, _t, sched = _sched_orch("set a timer for 10 minutes")
     asyncio.run(orch.run())
     assert len(sched.added) == 1
-    task, fire_at, is_timer = sched.added[0]
+    task, fire_at, is_timer, label = sched.added[0]
     assert is_timer is True
+    assert label == "10 minutes"   # recorded so "cancel the 10 minute one" can find it
 
 
 def test_speaking_a_reminder_request_keeps_the_task():

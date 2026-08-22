@@ -279,3 +279,27 @@ def test_resolve_target_rules():
     assert resolve_target([a], "")[0] is a           # only one -> unambiguous
     assert resolve_target([a, b], "")[1] == "ambiguous"
     assert resolve_target([a, b], "gym")[0] is a     # hint picks it out
+
+
+def test_a_bare_timer_can_be_named_by_its_duration(tmp_path):
+    """He says "stop the timer set for 10 minutes" — a timer has no task text, so the
+    label it was created with is the only thing that can identify it."""
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("", NOW + timedelta(minutes=10), is_timer=True, label="10 minutes")
+    sched.add("", NOW + timedelta(minutes=5), is_timer=True, label="5 minutes")
+
+    count, reason = sched.cancel("10 minutes")
+    assert count == 1 and reason == ""
+    assert [p.label for p in store.pending()] == ["5 minutes"]
+
+
+def test_a_hint_matching_several_equally_stays_ambiguous(tmp_path):
+    store = _store(tmp_path)
+    sched = Scheduler(store, lambda _t: None)
+    sched.add("", NOW + timedelta(minutes=10), is_timer=True, label="10 minutes")
+    sched.add("", NOW + timedelta(minutes=5), is_timer=True, label="5 minutes")
+
+    count, reason = sched.cancel("minutes")     # matches both equally
+    assert count == 0 and reason == "ambiguous"
+    assert len(store.pending()) == 2
