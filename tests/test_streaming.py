@@ -225,3 +225,135 @@ def test_the_lock_is_free_for_extraction_once_the_reply_ends():
     orch, _t = _orch(ScriptedLLM("All done. Bye."))
     asyncio.run(orch._think_and_speak([]))
     assert not orch._llm_lock.locked()
+
+
+# -- what the fakes missed: detector starvation and barge-in recovery --------
+
+
+class WarmingWake:
+    """A wake detector that behaves like the REAL one: it needs a run of recent
+    frames before it can fire, because openWakeWord builds its mel/embedding buffers
+    over about a second of CONTINUOUS audio.
+
+    The stateless FakeWake ("frame == trigger") can never show the starvation bug —
+    which is exactly why the unit tests passed while live barge-in went silent.
+    """
+
+    WARMUP = 5
+
+    def __init__(self, trigger):
+        self._trigger = trigger
+        self.frames_seen = 0
+        self._since_gap = 0
+
+    def process(self, frame):
+        self.frames_seen += 1
+        self._since_gap += 1
+        if frame != self._trigger:
+            return False
+        return self._since_gap >= self.WARMUP      # cold buffer -> missed wake
+
+    def starve(self):
+        """Simulate the detector receiving nothing for a while."""
+        self._since_gap = 0
+
+
+def test_both_detectors_are_fed_every_frame_whatever_the_state():
+    """The starvation fix: neither model may go cold while the other is in use."""
+    wake, stop = WarmingWake(WAKE), WarmingWake(STOP)
+    transport = FakeTransport([b"a", b"b", b"c"])
+    orch = Orchestrator(
+        transport=transport, wake=wake, stopword=stop, vad=FakeVad(),
+        transcriber=None, llm=ScriptedLLM("x."), synthesizer=TextSynth())
+
+    async def feed():
+        for st in (ConversationState.IDLE, ConversationState.SPEAKING,
+                   ConversationState.LISTENING):
+            orch._enter(st)
+            await orch._handle_frame(b"filler")
+
+    asyncio.run(feed())
+    assert wake.frames_seen == 3, "the wake detector went cold in some state"
+    assert stop.frames_seen == 3, "the stop detector went cold in some state"
+
+
+def test_the_wake_word_still_fires_right_after_a_reply():
+    """Regression for the live silent failure: interrupt, then wake again."""
+    wake = WarmingWake(WAKE)
+    transport = FakeTransport([])
+    orch = Orchestrator(
+        transport=transport, wake=wake, stopword=WarmingWake(STOP), vad=FakeVad(),
+        transcriber=None, llm=ScriptedLLM("x."), synthesizer=TextSynth())
+
+    async def scenario():
+        orch._enter(ConversationState.SPEAKING)
+        for _ in range(10):                       # a long reply plays
+            await orch._handle_frame(b"her voice")
+        orch._enter(ConversationState.IDLE)
+        await orch._handle_frame(WAKE)            # he wakes her immediately after
+
+    asyncio.run(scenario())
+    assert orch.state is ConversationState.LISTENING, \
+        "the wake word was missed after a reply — the detector had gone cold"
+
+
+def test_a_barge_in_ends_the_turn_listening_not_idle():
+    """He said the wake word to cut her off; that word is spent. Going idle would
+    make him say it twice before she heard what he interrupted her to say."""
+    orch, transport = _orch(ScriptedLLM("One. Two. Three. Four."))
+
+    original = orch._speak_sentence
+
+    async def speak_then_barge(text):
+        await original(text)
+        if len(transport.spoken) == 1:
+            orch._barge_in = True                 # as _handle_frame would set it
+            orch._interrupt.set()
+    orch._speak_sentence = speak_then_barge
+
+    async def scenario():
+        await orch._think_and_speak([])
+        # mimic the tail of _run_turn
+        if orch._barge_in:
+            orch._barge_in = False
+            orch._begin_listening()
+
+    asyncio.run(scenario())
+    assert orch.state is ConversationState.LISTENING
+    assert not orch._llm_lock.locked()
+
+
+def test_the_stop_word_sets_barge_in_only_once():
+    orch, _t = _orch(ScriptedLLM("x."))
+    orch._enter(ConversationState.SPEAKING)
+    asyncio.run(orch._handle_frame(STOP))
+    assert orch._barge_in and orch._interrupt.is_set()
+
+
+def test_a_wake_with_no_speech_gives_up_instead_of_listening_forever():
+    """A false wake used to hang in LISTENING permanently — the VAD can't end a turn
+    that never started, so from outside she looked dead."""
+    orch, _t = _orch(ScriptedLLM("x."))
+    orch._listen_timeout_frames = 3
+
+    class SilentVad(FakeVad):
+        def is_endpoint(self, frame):
+            return False                          # nothing ever ends the turn
+    orch.vad = SilentVad()
+
+    async def scenario():
+        await orch._handle_frame(WAKE)
+        assert orch.state is ConversationState.LISTENING
+        for _ in range(5):
+            await orch._handle_frame(b"silence")
+
+    asyncio.run(scenario())
+    assert orch.state is ConversationState.IDLE, "she should have gone back to sleep"
+
+
+def test_each_sentence_is_printed_as_it_starts_playing(capsys):
+    orch, _t = _orch(ScriptedLLM("First one. Second one."))
+    asyncio.run(orch._think_and_speak([]))
+    out = capsys.readouterr().out
+    assert 'isha: "First one."' in out
+    assert 'isha: "Second one."' in out

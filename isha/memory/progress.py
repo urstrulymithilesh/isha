@@ -110,6 +110,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "point, and she stops mid-thought when you do",
         True,
     ),
+    ProgressEntry(
+        "v1.3 — she listens after you cut her off", "2026-08-22",
+        "interrupting her used to leave her staring into space: the word you used to stop "
+        "her was the same one that wakes her, so it got spent stopping and she never heard "
+        "what came next. Now cutting her off puts her straight back to listening, she says "
+        "out loud what she is doing at each step, and she gives up gracefully if a wake "
+        "turns out to be nothing",
+        True,
+    ),
 ]
 
 

@@ -37,7 +37,7 @@ from isha.core.interfaces import (
 from isha.config import CONFIG
 from isha.context import build_messages, next_step_nudge, self_state_context
 from isha.core.state import ConversationState, disposition_for
-from isha.audio.frames import SAMPLE_RATE
+from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
@@ -131,6 +131,12 @@ class Orchestrator:
         # start of the sentence — prepended to the turn buffer when we start listening.
         self._preroll: deque[bytes] = deque(maxlen=preroll_frames)
         self._interrupt = asyncio.Event()
+        # Set when the stop-word cuts a reply short. He just said the wake word, so the
+        # turn ends by LISTENING for what he actually wants rather than going idle and
+        # making him say it twice.
+        self._barge_in = False
+        self._listen_frames = 0
+        self._listen_timeout_frames = ms_to_chunks(CONFIG.audio.listen_timeout_ms)
         self._turn_task: asyncio.Task[None] | None = None
         # Overlap gating: ONE lock guards every Ollama call (reply AND extraction), so
         # they can never hit the model/CPU at the same time. Extraction runs in the idle
@@ -190,20 +196,40 @@ class Orchestrator:
 
     async def _handle_frame(self, frame: bytes) -> None:
         self._preroll.append(frame)  # always keep the most recent audio for pre-roll
+
+        # BOTH detectors see EVERY frame, whatever the state, and only the relevant
+        # result is acted on. openWakeWord is a streaming model: it builds mel and
+        # embedding buffers over roughly a second of CONTINUOUS audio. Feeding the wake
+        # detector nothing during a ten-second reply left it stale, so the "hey jarvis"
+        # right after a barge-in landed in its dead zone and was missed — which looked
+        # exactly like she had died. Fakes can't show this; only a real model can.
+        woke = self.wake.process(frame)
+        stopped = woke if self.stopword is self.wake else self.stopword.process(frame)
+
         st = self.state
         if st is ConversationState.IDLE:
             if self._alerts:
                 await self._speak(self._alerts.pop(0))
                 return
-            if self.wake.process(frame):
+            if woke:
+                print("  [wake] heard the wake word")
                 self._begin_listening()
         elif st is ConversationState.LISTENING:
             self._buffer += frame
+            self._listen_frames += 1
             if self.vad.is_endpoint(frame):
                 self._start_turn()
+            elif self._listen_frames > self._listen_timeout_frames:
+                # Nothing said after a wake. Without this she waits forever, because the
+                # VAD can't end a turn that never started.
+                print("  [listening] nothing said — going back to sleep")
+                self._buffer = bytearray()
+                self._enter(ConversationState.IDLE)
         elif st is ConversationState.SPEAKING:
             # Half-duplex: full STT is gated, but the stop-word stays live.
-            if self.stopword.process(frame):
+            if stopped and not self._interrupt.is_set():
+                print("  [interrupt] stop-word heard — cutting the reply short")
+                self._barge_in = True
                 self._interrupt.set()
         # THINKING: transient; frames are ignored while the LLM runs.
 
@@ -217,6 +243,7 @@ class Orchestrator:
         # the wake word's detection latency) is included. Do NOT flush here — flushing
         # would drop exactly those queued start-of-speech frames.
         self._buffer = bytearray(b"".join(self._preroll))
+        self._listen_frames = 0
         self.vad.reset()
         self._enter(ConversationState.LISTENING)
 
@@ -285,6 +312,13 @@ class Orchestrator:
             if self.state is not ConversationState.IDLE:
                 self._enter(ConversationState.IDLE)
             await self._drain_alerts()
+            if self._barge_in:
+                # He said the wake word to cut her off, so that word is already spent.
+                # Going idle here would make him say it a second time before she'd
+                # hear the thing he actually interrupted her to say.
+                self._barge_in = False
+                print("  [interrupt] listening for what you wanted instead")
+                self._begin_listening()
 
     async def _think(self, messages: list[Message]) -> str:
         """Generate the whole reply before returning. Kept for callers that want text
@@ -389,6 +423,7 @@ class Orchestrator:
         if self.state is not ConversationState.SPEAKING:
             self._enter(ConversationState.SPEAKING)
             self.transport.mute_input()    # half-duplex holds for the whole reply
+        print(f'  isha: "{text}"')          # printed as each sentence starts playing
         await self.transport.play(
             self._interruptible(self.synth.synthesize(text)),
             sample_rate=self.synth.sample_rate,
@@ -540,6 +575,7 @@ class Orchestrator:
         self._enter(ConversationState.SPEAKING)
         self._interrupt.clear()
         self.transport.mute_input()
+        print(f'  isha: "{text}"')
         try:
             await self.transport.play(
                 self._interruptible(self.synth.synthesize(text)),

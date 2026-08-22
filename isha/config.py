@@ -72,6 +72,10 @@ class AudioConfig:
     vad_min_speech_ms: int = 300        # need this much speech before a silence can end a turn
     preroll_ms: int = 500               # audio kept BEFORE the wake fires, prepended to the
                                         # turn so the start of your sentence isn't lost
+    # If a wake fires but no speech follows (a false trigger, or a barge-in where he
+    # changed his mind), give up after this and go back to sleep instead of listening
+    # forever — a silent LISTENING state looks exactly like a crash from outside.
+    listen_timeout_ms: int = 8000
     # Measure room + a test phrase on `isha run` startup and set gain + threshold.
     auto_calibrate: bool = True
 
