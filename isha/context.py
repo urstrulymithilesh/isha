@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from datetime import datetime
+
 from isha.core.interfaces import Fact, Message
 
 
@@ -22,6 +24,8 @@ def _facts_line(facts: Sequence[Fact]) -> Message:
         "You genuinely remember these things about the person you're talking to, from "
         "earlier conversations. Treat them as real memories — use them naturally and "
         "confidently, and state the details ACCURATELY (don't change a time or a name). "
+        "They are written ABOUT him in the third person, but you are talking TO him, so "
+        "say \"you\" and \"your\" — \"you made me\", never \"Mithilesh made me\". "
         "Don't recite them as a list: " + joined,
     )
 
@@ -63,6 +67,23 @@ def next_step_nudge() -> Message:
         "the spirit of 'what would you do next, boss?' — because you enjoy watching him decide. "
         "Keep it to a line. Only if there is genuinely one single obvious next thing may you "
         "just name that instead.",
+    )
+
+
+def now_context(*, now=None):
+    """The real date and time, every turn.
+
+    Without it she invented one — asked the time she answered "about 3:47 PM" at 09:51,
+    and "it's a Wednesday" on a Sunday. A model with no clock will not refuse, it will
+    guess, so the fix is to give her the clock rather than to forbid the answer.
+    """
+    now = now or datetime.now()
+    return Message(
+        "system",
+        f"Right now it is {now:%A %d %B %Y, %H:%M} (24-hour clock). That is the real "
+        "current date and time — use it if he asks, and never state a different one. "
+        "It is also the ONLY thing you can perceive about the world outside this "
+        "conversation: you have no window, no weather, no news, no location.",
     )
 
 

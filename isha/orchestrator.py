@@ -36,7 +36,7 @@ from isha.core.interfaces import (
 )
 from isha.config import CONFIG
 from isha.context import (build_messages, episode_context, next_step_nudge,
-                          self_state_context, shared_history_context)
+                          now_context, self_state_context, shared_history_context)
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
@@ -375,7 +375,7 @@ class Orchestrator:
                 self._engaged = False
                 self._go_quiet = True
                 print("  [listening] told to stand down — wake word needed again")
-            extra: list[Message] = []
+            extra: list[Message] = [now_context()]     # she always knows the real time
             recall_mode = False
             if _asks_about_self(text):
                 from isha.memory.progress import latest, previous

@@ -21,9 +21,15 @@ _EMOJI = re.compile(
 _WS = re.compile(r"\s+")
 
 
+# The persona's examples are labelled "Isha: ...", and the model sometimes copies the
+# label into the reply. Spoken aloud it sounds like she is reading a script.
+_SELF_LABEL = re.compile(r"^\s*isha\s*[:\-]\s*", re.I)
+
+
 def clean_for_speech(text: str) -> str:
     if not text:
         return ""
+    text = _SELF_LABEL.sub("", text)
     lines = []
     for raw in text.splitlines():
         s = _HEADING.sub("", raw)

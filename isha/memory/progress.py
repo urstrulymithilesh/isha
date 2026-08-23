@@ -160,6 +160,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "up there together whichever way you said it",
         True,
     ),
+    ProgressEntry(
+        "v1.9 — she stopped making things up about the world", "2026-08-23",
+        "she knows what time it actually is now, and when you ask about something she "
+        "has no way of seeing — the weather, the news, what is outside — she says so "
+        "instead of inventing an answer. She also stopped tacking your name onto the "
+        "end of every other sentence",
+        True,
+    ),
 ]
 
 

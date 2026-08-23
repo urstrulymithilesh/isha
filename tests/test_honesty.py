@@ -1,0 +1,80 @@
+"""Absolute honesty about the present world, and talking TO him rather than about him.
+
+Asked the time she used to answer "about 3:47 PM" at 09:51, and "it's a Wednesday" on a
+Sunday. Asked the weather: "Grey and pouring." A model with no clock and no window does
+not refuse — it guesses — so the fix is to give her the clock and forbid the rest.
+"""
+
+from datetime import datetime
+
+from isha.context import now_context
+from isha.persona import SYSTEM_PROMPT
+from isha.tts.speech_text import clean_for_speech
+
+WHEN = datetime(2026, 8, 23, 9, 53)
+
+
+# -- the clock she now has --------------------------------------------------
+
+
+def test_the_real_date_and_time_are_supplied():
+    content = now_context(now=WHEN).content
+    assert "Sunday" in content and "23 August 2026" in content and "09:53" in content
+
+
+def test_she_is_told_it_is_the_only_thing_she_can_perceive():
+    content = now_context(now=WHEN).content.lower()
+    for blind in ("weather", "news", "location"):
+        assert blind in content, blind
+    assert "never state a different one" in content
+
+
+def test_the_clock_moves():
+    a = now_context(now=datetime(2026, 8, 23, 9, 0)).content
+    b = now_context(now=datetime(2026, 8, 23, 17, 30)).content
+    assert "09:00" in a and "17:30" in b
+
+
+# -- the persona rules that back it up --------------------------------------
+
+
+def test_the_honesty_rule_is_stated_in_the_persona():
+    low = SYSTEM_PROMPT.lower()
+    assert "no way of knowing" in low
+    assert "guessing is not an option" in low
+
+
+def test_her_tastes_no_longer_mention_weather():
+    """"You love rain and grey afternoons" came back out as "Grey and pouring" when she
+    was asked what it was like outside. A taste that names a perceivable world-state is
+    a false claim waiting to happen."""
+    low = SYSTEM_PROMPT.lower()
+    for leak in ("love rain", "grey afternoon", "gray afternoon"):
+        assert leak not in low, leak
+
+
+def test_the_persona_does_not_hand_her_a_quotable_refusal():
+    """A capitalised instruction came back verbatim: she literally said
+    "I CANNOT KNOW IT." Directives must describe behaviour, not supply a line."""
+    assert "SAY YOU CANNOT KNOW IT" not in SYSTEM_PROMPT
+
+
+def test_the_anti_tic_rule_does_not_itself_use_his_name_as_an_example():
+    """The first version quoted "you're the one who made me, Mithilesh" as the thing to
+    avoid — and she copied the example."""
+    section = SYSTEM_PROMPT.split("TALK TO HIM, NOT ABOUT HIM.")[1].split("\n\n")[0]
+    assert "Mithilesh" not in section
+
+
+# -- the spoken-line cleanup ------------------------------------------------
+
+
+def test_a_leaked_speaker_label_is_stripped():
+    """The few-shot exchanges are labelled "Isha: ...", and she copied the label."""
+    assert clean_for_speech("Isha: I have no way of seeing outside") == \
+        "I have no way of seeing outside"
+    assert clean_for_speech("isha - hello") == "hello"
+
+
+def test_her_name_is_untouched_when_it_is_part_of_the_sentence():
+    assert clean_for_speech("Isha is the name you gave me") == "Isha is the name you gave me"
