@@ -127,15 +127,17 @@ def test_happy_path_full_loop():
     for expected in (ConversationState.LISTENING, ConversationState.THINKING,
                      ConversationState.SPEAKING):
         assert expected in seq
-    assert orch.state is ConversationState.IDLE
-    # the echo brain's reply was spoken
+    # Continuous mode: the wake engaged her, so the turn ends LISTENING for a
+    # follow-up rather than making him say the wake word again.
+    assert orch.state is ConversationState.LISTENING
+    assert orch._engaged
     assert transport.spoken == ["I heard you say: hello world"]
 
 
 def test_no_wake_no_turn():
     orch, transport = _build([SPEECH, SPEECH])
     asyncio.run(orch.run())
-    assert orch.state is ConversationState.IDLE
+    assert orch.state in (ConversationState.IDLE, ConversationState.LISTENING)
     assert transport.spoken == []  # never woke, never spoke
 
 
@@ -200,8 +202,8 @@ def test_brain_failure_does_not_hang_and_speaks_error():
     orch, transport = _build([WAKE, SPEECH, END])
     orch.llm = BrokenLLM()
     asyncio.run(orch.run())
-    # did not stall in THINKING/SPEAKING — recovered to idle
-    assert orch.state is ConversationState.IDLE
+    # did not stall in THINKING/SPEAKING — recovered and is listening again
+    assert orch.state in (ConversationState.IDLE, ConversationState.LISTENING)
     # spoke a clear apology instead of a reply, and left no dangling user turn
     assert transport.spoken and "went wrong" in transport.spoken[-1].lower()
     assert [m for m in orch._history if m.role == "user"] == []
@@ -301,13 +303,22 @@ def test_new_turn_cancels_pending_extraction_cleanly():
     asyncio.run(scenario())
 
 
-def test_extraction_skipped_when_not_idle():
+def test_extraction_skipped_when_a_turn_is_actively_running():
     orch, _t, store, extractor = _build_mem([])
-    orch._enter(ConversationState.LISTENING)  # a turn is active
+    orch._enter(ConversationState.THINKING)   # a turn is genuinely mid-flight
     asyncio.run(orch._extract_facts("The user said: hi\nYou replied: hey"))
-    # acquired the lock, saw it wasn't idle, and bailed before touching Ollama or the store
+    # acquired the lock, saw a live turn, and bailed before touching Ollama or the store
     assert extractor.calls == 0
     assert store.facts == []
+
+
+def test_extraction_still_runs_while_merely_listening():
+    """Continuous mode keeps her LISTENING between turns. Gating extraction on IDLE
+    meant it never ran again once she stopped idling."""
+    orch, _t, store, extractor = _build_mem([])
+    orch._enter(ConversationState.LISTENING)  # waiting to hear, not mid-turn
+    asyncio.run(orch._extract_facts("The user said: hi\nYou replied: hey"))
+    assert extractor.calls == 1
 
 
 # -- Phase 2 step 3: retrieval into the turn context -----------------------

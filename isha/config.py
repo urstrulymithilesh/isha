@@ -76,6 +76,12 @@ class AudioConfig:
     # changed his mind), give up after this and go back to sleep instead of listening
     # forever — a silent LISTENING state looks exactly like a crash from outside.
     listen_timeout_ms: int = 8000
+    # Once engaged, she keeps listening between turns with no wake word. The window is
+    # much longer than the post-wake one (a pause mid-conversation is normal), but it is
+    # NOT infinite on purpose: a false VAD trigger on room noise would otherwise start
+    # junk turns forever, and a mic that never closes is a privacy regression.
+    continuous_timeout_ms: int = 45000
+    continuous_mode: bool = True
     # Measure room + a test phrase on `isha run` startup and set gain + threshold.
     auto_calibrate: bool = True
 

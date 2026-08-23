@@ -151,6 +151,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "nothing happened on and she says so plainly rather than making one up",
         True,
     ),
+    ProgressEntry(
+        "v1.8 — she stays awake, and you can type to her", "2026-08-22",
+        "you say her wake word once and she keeps listening for as long as the "
+        "conversation lasts, instead of making you call her back every single turn. "
+        "Tell her to go quiet and she does. She also has a little window now where you "
+        "can type to her instead of speaking, and both sides of the conversation show "
+        "up there together whichever way you said it",
+        True,
+    ),
 ]
 
 

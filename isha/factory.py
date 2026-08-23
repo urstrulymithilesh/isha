@@ -15,7 +15,8 @@ def _print_state(state: ConversationState) -> None:
     print(f"  [state] -> {state.value}")
 
 
-def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = None):
+def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = None,
+                       text_channel=None):
     """Returns (orchestrator, voice_label, brain_label). input_device overrides
     CONFIG.audio.input_device (from `run --device N`)."""
     from isha.audio.transport import LocalAudioTransport
@@ -87,6 +88,7 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
         system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
         store=store, extractor=extractor, episodes=episodes, summariser=summariser,
+        text_channel=text_channel,
         on_state_change=_print_state,
     )
     # Scheduler needs the orchestrator's notify(), so it's attached after construction.

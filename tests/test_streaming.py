@@ -341,6 +341,7 @@ def test_a_wake_with_no_speech_gives_up_instead_of_listening_forever():
     that never started, so from outside she looked dead."""
     orch, _t = _orch(ScriptedLLM("x."))
     orch._listen_timeout_frames = 3
+    orch._continuous_timeout_frames = 3      # engaged by the wake; both windows short here
 
     class SilentVad(FakeVad):
         def is_endpoint(self, frame):

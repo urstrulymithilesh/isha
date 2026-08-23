@@ -93,6 +93,19 @@ _SHARED_HISTORY_PATTERNS = (
 )
 
 
+# Explicit "stand down" — back to wake-word-required.
+_QUIET_PATTERNS = (
+    "go to sleep", "go quiet", "stop listening", "stand down", "that's all for now",
+    "thats all for now", "stop for now", "be quiet", "sleep now", "goodnight isha",
+    "good night isha", "leave me alone", "we're done", "were done", "that will be all",
+    "stop the conversation", "end the conversation",
+)
+
+
+def _asks_to_go_quiet(text: str) -> bool:
+    return any(p in text.lower() for p in _QUIET_PATTERNS)
+
+
 def _asks_about_shared_history(text: str) -> bool:
     low = text.lower()
     if any(p in low for p in _SHARED_HISTORY_PATTERNS):
@@ -137,6 +150,7 @@ class Orchestrator:
         store: MemoryStore | None = None,
         extractor: FactExtractor | None = None,
         episodes: EpisodeStore | None = None,
+        text_channel=None,
         summariser: Summariser | None = None,
         scheduler=None,
         on_state_change: Callable[[ConversationState], None] | None = None,
@@ -151,6 +165,7 @@ class Orchestrator:
         self.store = store              # None => memory disabled (e.g. Echo brain)
         self.extractor = extractor      # None => no fact extraction
         self.episodes = episodes        # None => no episodic memory
+        self.text_channel = text_channel  # None => no UI attached
         self.summariser = summariser
         self.scheduler = scheduler      # None => timers/reminders disabled
         self._on_state_change = on_state_change
@@ -166,8 +181,12 @@ class Orchestrator:
         # turn ends by LISTENING for what he actually wants rather than going idle and
         # making him say it twice.
         self._barge_in = False
+        # True once woken: she keeps listening between turns until told to go quiet.
+        self._engaged = False
+        self._go_quiet = False
         self._listen_frames = 0
         self._listen_timeout_frames = ms_to_chunks(CONFIG.audio.listen_timeout_ms)
+        self._continuous_timeout_frames = ms_to_chunks(CONFIG.audio.continuous_timeout_ms)
         self._turn_task: asyncio.Task[None] | None = None
         # Overlap gating: ONE lock guards every Ollama call (reply AND extraction), so
         # they can never hit the model/CPU at the same time. Extraction runs in the idle
@@ -240,6 +259,16 @@ class Orchestrator:
     async def _handle_frame(self, frame: bytes) -> None:
         self._preroll.append(frame)  # always keep the most recent audio for pre-roll
 
+        # Typed input rides the SAME loop as audio, so a message can arrive while the
+        # voice loop is live. Ignored mid-turn: the reply in flight finishes first.
+        if self.text_channel is not None and self.state in (ConversationState.IDLE,
+                                                            ConversationState.LISTENING):
+            typed = self.text_channel.take()
+            if typed:
+                print(f'  [ui] typed: "{typed}"')
+                self._start_text_turn(typed)
+                return
+
         # BOTH detectors see EVERY frame, whatever the state, and only the relevant
         # result is acted on. openWakeWord is a streaming model: it builds mel and
         # embedding buffers over roughly a second of CONTINUOUS audio. Feeding the wake
@@ -255,18 +284,24 @@ class Orchestrator:
                 await self._speak(self._alerts.pop(0))
                 return
             if woke:
-                print("  [wake] heard the wake word")
+                print("  [wake] heard the wake word"
+                      + (" — staying awake until you tell me to stop"
+                         if CONFIG.audio.continuous_mode and not self._engaged else ""))
+                self._engaged = CONFIG.audio.continuous_mode
                 self._begin_listening()
         elif st is ConversationState.LISTENING:
             self._buffer += frame
             self._listen_frames += 1
             if self.vad.is_endpoint(frame):
                 self._start_turn()
-            elif self._listen_frames > self._listen_timeout_frames:
-                # Nothing said after a wake. Without this she waits forever, because the
-                # VAD can't end a turn that never started.
-                print("  [listening] nothing said — going back to sleep")
+            elif self._listen_frames > (self._continuous_timeout_frames if self._engaged
+                                        else self._listen_timeout_frames):
+                # Nothing said. Without this she waits forever, because the VAD cannot
+                # end a turn that never started.
+                print("  [listening] quiet for a while — going back to sleep"
+                      if self._engaged else "  [listening] nothing said — going back to sleep")
                 self._buffer = bytearray()
+                self._engaged = False
                 self._enter(ConversationState.IDLE)
         elif st is ConversationState.SPEAKING:
             # Half-duplex: full STT is gated, but the stop-word stays live.
@@ -276,12 +311,17 @@ class Orchestrator:
                 self._interrupt.set()
         # THINKING: transient; frames are ignored while the LLM runs.
 
-    def _begin_listening(self) -> None:
+    def _begin_listening(self, *, interrupt_background: bool = True) -> None:
+        """interrupt_background=False for the automatic post-reply transition in
+        continuous mode. Cancelling there would kill the fact extraction that the turn
+        just kicked off — every single turn — because she is now always listening
+        rather than idling between turns."""
         # A new interaction takes priority: cancel any pending idle-gap extraction so it
         # can't compete with the coming reply. Best-effort — a lost extraction is fine.
-        for task in (self._extract_task, self._catchup_task):
-            if task is not None and not task.done():
-                task.cancel()   # safe now: the turn stays unprocessed and is retried later
+        if interrupt_background:
+            for task in (self._extract_task, self._catchup_task):
+                if task is not None and not task.done():
+                    task.cancel()   # safe: the turn stays unprocessed, retried later
         # Seed the turn with the pre-roll so the start of the sentence (spoken during
         # the wake word's detection latency) is included. Do NOT flush here — flushing
         # would drop exactly those queued start-of-speech frames.
@@ -297,19 +337,31 @@ class Orchestrator:
         self._turn_task = asyncio.create_task(self._run_turn(audio))
 
     async def _run_turn(self, audio: bytes) -> None:
-        appended_user = False
+        """A SPOKEN turn: transcribe, then hand to the shared core."""
         secs = len(audio) / 2 / SAMPLE_RATE  # int16 mono @ 16k
         print(f"  [captured {secs:.1f}s of audio]")
+        text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
+        # The pre-roll means the wake word itself is usually in the transcript, and
+        # that prefix measurably breaks fact extraction on 3b. Strip it once, here.
+        text = strip_wake_prefix(text, CONFIG.wake.model)
+        await self._handle_utterance(text, via="voice")
+
+    def _start_text_turn(self, text: str) -> None:
+        """A TYPED turn. Same core as speech, so the UI cannot drift into a second
+        Isha with her own memory."""
+        self._enter(ConversationState.THINKING)
+        self._turn_task = asyncio.create_task(self._handle_utterance(text, via="text"))
+
+    async def _handle_utterance(self, text: str, *, via: str = "voice") -> None:
+        appended_user = False
         try:
-            text = (await asyncio.to_thread(self.transcriber.transcribe, audio)).strip()
-            # The pre-roll means the wake word itself is usually in the transcript, and
-            # that prefix measurably breaks fact extraction on 3b. Strip it once, here.
-            text = strip_wake_prefix(text, CONFIG.wake.model)
             if not text:
                 print("  [transcript empty — heard no clear speech]")
                 self._enter(ConversationState.IDLE)
                 return
             print(f'  you: "{text}"')
+            if self.text_channel is not None:
+                self.text_channel.log("you", text, via=via)
             self._history.append(Message("user", text))
             appended_user = True
             facts = (
@@ -319,6 +371,10 @@ class Orchestrator:
             )
             if facts:
                 print("  [memory] recalled " + "; ".join(f.subject or f.text[:30] for f in facts))
+            if _asks_to_go_quiet(text):
+                self._engaged = False
+                self._go_quiet = True
+                print("  [listening] told to stand down — wake word needed again")
             extra: list[Message] = []
             recall_mode = False
             if _asks_about_self(text):
@@ -327,6 +383,12 @@ class Orchestrator:
                 if block is not None:
                     extra.append(block)
                     print(f"  [self] injected current state ({latest().version})")
+            if self._go_quiet:
+                extra.append(Message(
+                    "system",
+                    "He just asked you to stop listening. Say a short, warm goodbye in "
+                    "ONE sentence and nothing else — no questions, no offers.",
+                ))
             if _asks_what_next(text):
                 extra.append(next_step_nudge())
                 print("  [self] next-step question — deflecting to him")
@@ -393,6 +455,13 @@ class Orchestrator:
                 self._barge_in = False
                 print("  [interrupt] listening for what you wanted instead")
                 self._begin_listening()
+            elif self._go_quiet:
+                self._go_quiet = False       # she has said goodbye; now actually stop
+                self._enter(ConversationState.IDLE)
+            elif self._engaged and self.state is ConversationState.IDLE:
+                # Continuous conversation: no wake word between turns. Background work
+                # started by THIS turn must survive the transition.
+                self._begin_listening(interrupt_background=False)
 
     async def _think(self, messages: list[Message]) -> str:
         """Generate the whole reply before returning. Kept for callers that want text
@@ -498,6 +567,9 @@ class Orchestrator:
             self._enter(ConversationState.SPEAKING)
             self.transport.mute_input()    # half-duplex holds for the whole reply
         print(f'  isha: "{text}"')          # printed as each sentence starts playing
+        if self.text_channel is not None:
+            self.text_channel.log("isha", text)
+            self.text_channel.set_speaking(True)
         await self.transport.play(
             self._interruptible(self.synth.synthesize(text)),
             sample_rate=self.synth.sample_rate,
@@ -505,6 +577,8 @@ class Orchestrator:
 
     def _finish_speaking(self) -> None:
         """Always run, interrupted or not: unmute, flush the echo tail, back to idle."""
+        if self.text_channel is not None:
+            self.text_channel.set_speaking(False)
         self.transport.unmute_input()
         if self.state is not ConversationState.IDLE:
             self._enter(ConversationState.IDLE)
@@ -674,7 +748,11 @@ class Orchestrator:
             print("  [memory] catching up on an earlier exchange…" if catchup
                   else "  [memory] extracting…")
             async with self._llm_lock:          # never overlaps a live reply on Ollama
-                if self.state is not ConversationState.IDLE:
+                # Waiting-to-hear (LISTENING) is a fine time to extract; only an
+                # ACTIVE turn must not be competed with. Checking for IDLE here broke
+                # extraction entirely once continuous mode kept her listening between
+                # turns — she was never idle again.
+                if self.state in (ConversationState.THINKING, ConversationState.SPEAKING):
                     print("  [memory] skipped — a new turn started before extraction could run")
                     return
                 raw = await asyncio.to_thread(self.extractor.extract, exchange)
@@ -728,5 +806,8 @@ class Orchestrator:
             yield chunk
 
     async def _drain_alerts(self) -> None:
-        while self._alerts and self.state is ConversationState.IDLE:
+        # Same reasoning as extraction: LISTENING is a safe moment to speak up, and
+        # requiring IDLE would mean reminders never fire in continuous mode.
+        while self._alerts and self.state in (ConversationState.IDLE,
+                                              ConversationState.LISTENING):
             await self._speak(self._alerts.pop(0))

@@ -231,9 +231,11 @@ async def scenario_conversation(mouth: Mouth, db: Path) -> Result:
     secs = sum(len(c) for c in transport.played) / 2 / 22050
     checks.append(f"piper produced ~{secs:.1f}s of speech in {transport.play_calls} sentence(s)")
 
-    if orch.state is not ConversationState.IDLE:
-        return Result("conversation", False, f"ended in {orch.state.value}, not idle", checks=checks)
-    checks.append("returned to idle, lock released")
+    # Continuous mode: the wake engaged her, so a finished turn waits in LISTENING
+    # rather than demanding the wake word again.
+    if orch.state not in (ConversationState.IDLE, ConversationState.LISTENING):
+        return Result("conversation", False, f"ended in {orch.state.value}", checks=checks)
+    checks.append(f"ended in {orch.state.value} (engaged={orch._engaged}), lock released")
     if store:
         store.close()
     return Result("conversation", True, "full turn completed on the real stack", checks=checks)

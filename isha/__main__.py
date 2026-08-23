@@ -24,6 +24,7 @@ def _status() -> int:
     print()
     print("Commands:  python -m isha run     (live loop)")
     print("           python -m isha smoke   (live end-to-end check, ~1-3 min)")
+    print("           python -m isha run --ui  (adds the text UI at 127.0.0.1:8765)")
     print("           python spike.py        (prove the hardware)")
     return 0
 
@@ -213,8 +214,14 @@ def _run(argv: list[str]) -> int:
     from isha.factory import build_orchestrator
 
     device = _device_arg(argv)
+    channel = url = None
+    if "--ui" in argv:
+        from isha.ui.channel import TextChannel
+        from isha.ui.server import start as start_ui
+        channel = TextChannel()
+        url = start_ui(channel, port=int(_flag_value(argv, "--port") or 8765))
     orch, voice_label, brain_label = build_orchestrator(
-        use_ollama="--ollama" in argv, input_device=device,
+        use_ollama="--ollama" in argv, input_device=device, text_channel=channel,
     )
 
     # Gain / threshold: an explicit --gain wins; else auto-calibrate (unless off).
@@ -244,6 +251,8 @@ def _run(argv: list[str]) -> int:
           f"silence (min speech {CONFIG.audio.vad_min_speech_ms}ms), pre-roll {CONFIG.audio.preroll_ms}ms")
     print(f"   wake  : say 'hey jarvis'  (PLACEHOLDER wake word — a custom 'Isha' word is Phase 4)")
     print("   stop  : say the stop word while she's speaking to cut her off")
+    if url:
+        print(f"   ui    : {url}  (type there; it joins the same conversation)")
     print("   Ctrl-C to quit.")
     print("=" * 60)
 
