@@ -35,12 +35,15 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
-from isha.context import (build_messages, next_step_nudge, self_state_context,
-                          shared_history_context)
+from isha.context import (build_messages, episode_context, next_step_nudge,
+                          self_state_context, shared_history_context)
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
+from isha.memory.episodes import EpisodeStore, Summariser
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
+from isha.memory.temporal import parse_temporal_query
+from isha.persona import recall_prompt
 from isha.memory.forget_parse import parse_forget_command
 from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
                                  RescheduleCommand, _phrase_delay,
@@ -133,6 +136,8 @@ class Orchestrator:
         preroll_frames: int = 0,
         store: MemoryStore | None = None,
         extractor: FactExtractor | None = None,
+        episodes: EpisodeStore | None = None,
+        summariser: Summariser | None = None,
         scheduler=None,
         on_state_change: Callable[[ConversationState], None] | None = None,
     ) -> None:
@@ -145,6 +150,8 @@ class Orchestrator:
         self.synth = synthesizer
         self.store = store              # None => memory disabled (e.g. Echo brain)
         self.extractor = extractor      # None => no fact extraction
+        self.episodes = episodes        # None => no episodic memory
+        self.summariser = summariser
         self.scheduler = scheduler      # None => timers/reminders disabled
         self._on_state_change = on_state_change
 
@@ -168,6 +175,7 @@ class Orchestrator:
         self._llm_lock = asyncio.Lock()
         self._extract_task: asyncio.Task[None] | None = None
         self._catchup_task: asyncio.Task[None] | None = None
+        self._summary_task: asyncio.Task[None] | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._alerts: list[str] = []
         self._system_prompt = system_prompt
@@ -183,6 +191,11 @@ class Orchestrator:
         # delays the mic loop.
         if self.store is not None and self.extractor is not None:
             self._catchup_task = asyncio.create_task(self._catch_up_extractions())
+        # Fold anything left unsummarised by a previous session into an episode. Same
+        # resume-after-a-crash pattern as extraction: turns are persisted first, so a
+        # session that ended abruptly still becomes a memory.
+        if self.episodes is not None and self.summariser is not None:
+            self._summary_task = asyncio.create_task(self._summarise_pending())
         # Timers/reminders. The loop's first pass IS the startup reconcile: anything
         # that came due while she was closed (or the laptop slept) fires now.
         if self.scheduler is not None:
@@ -194,6 +207,12 @@ class Orchestrator:
                 break
         if self._turn_task is not None:
             await self._turn_task
+        # Close the session out as a memory before shutting down.
+        if self.episodes is not None and self.summariser is not None:
+            try:
+                await self._summarise_pending()
+            except Exception as e:               # noqa: BLE001 - never block shutdown
+                print(f"  [memory] could not summarise this session: {e}")
         if self._scheduler_task is not None:
             self._scheduler_task.cancel()        # tick loop is infinite; stop it on exit
         for task in (self._catchup_task, self._extract_task):
@@ -301,6 +320,7 @@ class Orchestrator:
             if facts:
                 print("  [memory] recalled " + "; ".join(f.subject or f.text[:30] for f in facts))
             extra: list[Message] = []
+            recall_mode = False
             if _asks_about_self(text):
                 from isha.memory.progress import latest, previous
                 block = self_state_context(latest(), previous())
@@ -310,8 +330,22 @@ class Orchestrator:
             if _asks_what_next(text):
                 extra.append(next_step_nudge())
                 print("  [self] next-step question — deflecting to him")
+            # Facts say what is TRUE; episodes say what HAPPENED and when. A
+            # question about past conversation is routed to the record, not to
+            # semantic fact recall, and is anchored to what genuinely exists.
+            if self.episodes is not None:
+                window = parse_temporal_query(text, now=datetime.now())
+                if window is not None:
+                    found = self.episodes.in_window(window)
+                    if not found and window.start is None:
+                        found = self.episodes.search(text, k=3)
+                    extra.append(episode_context(found, window.label))
+                    recall_mode = True
+                    print(f"  [memory] temporal question ({window.label}) — "
+                          f"{len(found)} episode(s) on record")
             if _asks_about_shared_history(text) and self.store is not None:
                 extra.append(shared_history_context(self.store.all_facts()))
+                recall_mode = True
                 print("  [memory] broad 'about us' question — anchored to stored facts only")
             # Timers/reminders: parsed deterministically (no extra LLM round-trip),
             # scheduled immediately, then she confirms it in her own words.
@@ -326,8 +360,11 @@ class Orchestrator:
                 note = self._handle_schedule_command(text)
                 if note is not None:
                     extra.append(Message("system", note))
+            # Recall questions drop the few-shot examples: they are vivid stories and
+            # the model recites them back as history. Accuracy over register here.
+            prompt = recall_prompt() if recall_mode else self._system_prompt
             messages = build_messages(
-                self._system_prompt, facts, self._history,
+                prompt, facts, self._history,
                 recent_limit=CONFIG.memory.recent_turns,
                 char_budget=CONFIG.memory.context_char_budget,
                 extra_system=extra,
@@ -593,6 +630,28 @@ class Orchestrator:
         print(f"  [reminder] set: {what} in {cmd.spoken_delay} (fires {cmd.fire_at:%H:%M:%S})")
         return (f"You just set a {what} for him, going off in {cmd.spoken_delay}. Confirm it "
                 "warmly in one short sentence — no lists, no repeating the time twice.")
+
+    async def _summarise_pending(self) -> None:
+        """Fold un-summarised turns into one episode. Cheap no-op when there is
+        nothing new, so it is safe to call at startup and at shutdown."""
+        assert self.episodes is not None and self.summariser is not None
+        turns = self.episodes.unsummarised_turns()
+        if len(turns) < 2:
+            return                               # not a conversation yet
+        try:
+            async with self._llm_lock:           # shares the reply/extraction gate
+                summary = await asyncio.to_thread(self.summariser.summarise, turns)
+            summary = summary.strip()
+            if not summary:
+                return
+            started = datetime.fromisoformat(turns[0][3])
+            ended = datetime.fromisoformat(turns[-1][3])
+            self.episodes.add(summary, started, ended, [t[0] for t in turns])
+            print(f"  [memory] saved this conversation: {summary[:70]}…")
+        except asyncio.CancelledError:
+            raise                                # retried next start; turns stay unmarked
+        except Exception as e:                   # noqa: BLE001 - best effort
+            print(f"  [memory] summarising failed: {type(e).__name__}: {e}")
 
     async def _catch_up_extractions(self) -> None:
         """Re-run extraction for exchanges that never finished, so a fact taught late

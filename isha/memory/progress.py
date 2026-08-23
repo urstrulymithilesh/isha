@@ -144,6 +144,13 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "making things up",
         True,
     ),
+    ProgressEntry(
+        "v1.7 — she remembers conversations, not just facts", "2026-08-22",
+        "she keeps a record of what you actually talked about, so asking what you "
+        "discussed yesterday gets a real answer instead of a shrug. Ask about a day "
+        "nothing happened on and she says so plainly rather than making one up",
+        True,
+    ),
 ]
 
 

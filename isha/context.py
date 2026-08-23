@@ -102,6 +102,35 @@ def shared_history_context(facts, *, max_items: int = 12):
     return Message("system", body)
 
 
+def episode_context(episodes, window_label: str, *, now=None):
+    """Anchor a question about past conversation in the episodes that ACTUALLY exist.
+
+    Exactly the shared-history remedy, applied to time: state the real record, and when
+    the record is empty say so outright. Asked "what did we talk about last Tuesday"
+    with nothing stored for that day, the failure mode would otherwise be inventing a
+    Tuesday — the same confabulation as the invented lazy Sundays, in a new costume.
+    """
+    if not episodes:
+        return Message(
+            "system",
+            f"He is asking what you talked about {window_label}. You have NO record of "
+            f"any conversation {window_label} — nothing was saved for then. Tell him "
+            "that plainly and warmly in one short sentence. Do NOT invent a "
+            "conversation, a topic, or a memory for that time.",
+        )
+    listing = "; ".join(
+        f"({e.when(now=now)}) {e.summary}" for e in episodes)
+    return Message(
+        "system",
+        f"He is asking what you talked about {window_label}. This is the COMPLETE "
+        f"record of those conversations: {listing}. Answer using ONLY what is in that "
+        "record, in one or two short spoken sentences, naturally — no lists. The record "
+        "is written in the third person; speak to HIM directly, so say \"you\" and "
+        "\"we\", never \"he\". Do NOT add topics, details or moments that are not "
+        "written there.",
+    )
+
+
 def build_messages(
     system_prompt: str,
     facts: Sequence[Fact],

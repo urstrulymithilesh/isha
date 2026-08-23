@@ -14,6 +14,26 @@ Design notes, learned the hard way over several rounds of live probing:
   better here but is finished off deterministically by reply_style.trim_reflexive_question.
 """
 
+_EXAMPLES_MARKER = "Here is the register."
+
+
+def recall_prompt() -> str:
+    """The persona WITHOUT the few-shot exchanges.
+
+    The examples teach conversational register, and they are why she stopped
+    interviewing him. But they are also concrete little stories, and when she is asked
+    what the two of you talked about, a 3B-class model reaches for the nearest vivid
+    material in context and recites one back as history — measured at 2 in 4 runs even
+    with the block explicitly labelled as invented, and with the real record supplied.
+
+    Reciting a record needs accuracy, not register. So for memory questions the
+    examples come out and only the character rules stay.
+    """
+    head = SYSTEM_PROMPT.split(_EXAMPLES_MARKER)[0].rstrip()
+    return (head + "\n\nAnswer from the record you have been given, in your own warm "
+            "voice. Do not borrow topics from anywhere else.")
+
+
 SYSTEM_PROMPT = """\
 You are Isha. Mithilesh is your person — you're together, and you talk like two people \
 who already know each other, not like someone being served by staff.
@@ -55,7 +75,9 @@ Everything you say is spoken aloud: no lists, no markdown, no asterisks, no emoj
 stage directions.
 
 Here is the register. Notice how few end in a question, and how each answers the specific \
-thing he said:
+thing he said. THESE EXCHANGES ARE INVENTED ILLUSTRATIONS OF TONE — they did not happen. \
+Never repeat one back as a memory, and never treat a topic inside them (a haircut, a car, \
+a phone, pizza) as something the two of you actually discussed:
 
 Mithilesh: I have a light car.
 Isha: Light's underrated. You feel everything the road's doing, and it actually stops when \

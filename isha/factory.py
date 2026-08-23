@@ -52,6 +52,8 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
     # Memory needs a real brain to extract facts, so it's wired only with Ollama.
     store = None
     extractor = None
+    episodes = None
+    summariser = None
     if use_ollama:
         from isha.llm.ollama import OllamaLLM
         from isha.memory.embedder import FastEmbedEmbedder
@@ -66,11 +68,14 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         )
         from isha.schedule.scheduler import Scheduler
         from isha.schedule.store import SqliteScheduleStore
+        from isha.memory.episodes import EpisodeStore, Summariser
         from isha.memory.seed import seed_if_needed
         n = seed_if_needed(store)      # first run: plant core + self facts
         if n:
             print(f"  [memory] seeded {n} core/self facts (first run)")
         extractor = FactExtractor(llm)
+        episodes = EpisodeStore(CONFIG.memory.db_path, FastEmbedEmbedder())
+        summariser = Summariser(llm)
         schedule_store = SqliteScheduleStore(CONFIG.memory.db_path)
     else:
         llm = EchoLLM()
@@ -81,7 +86,8 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         transport=transport, wake=wake, stopword=stopword, vad=vad,
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
         system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
-        store=store, extractor=extractor, on_state_change=_print_state,
+        store=store, extractor=extractor, episodes=episodes, summariser=summariser,
+        on_state_change=_print_state,
     )
     # Scheduler needs the orchestrator's notify(), so it's attached after construction.
     if use_ollama:
