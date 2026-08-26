@@ -48,6 +48,12 @@ Working end to end, offline:
   wall-clock time, and reconciled on wake — so a reminder survives the laptop sleeping
   or the app restarting, and admits it if it ends up late.
 
+- **Doing things on the computer** — "open Spotify", "next track", "find my tax notes".
+  Also deterministic, against a registry of things she is allowed to open (edit
+  `CONFIG.actions.apps` to teach her a new one). She reports what actually happened,
+  so a failed open is admitted rather than confirmed. Deleting, moving and running
+  arbitrary scripts are deliberately excluded.
+
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
 

@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `e6a2e21`. 238 tests, 43 commits, 71 files, ~8.7k lines of
+Last updated at commit `f7fd7f4`. 281 tests, 45 commits, 75 files, ~9.1k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -122,6 +122,15 @@ duration, refuses to guess when ambiguous), and query what is pending. SQLite-pe
 with absolute wall-clock fire times, reconciled on startup — so a reminder survives the
 laptop sleeping or the app closing, and admits it if it fires late.
 
+### Doing things on the computer
+Open a program, folder, site or protocol URL from a registry (`CONFIG.actions.apps`);
+media keys for whatever is playing; search documents/desktop/downloads for a file.
+Deterministic parsing, anchored at both ends for media so "we should play chess later"
+does not pause his music. Every branch reports what actually happened — a failed open
+says so rather than confirming, an unknown app is admitted rather than agreed to, and
+an empty search is forbidden from inventing a filename. Deleting, moving and running
+scripts are deliberately excluded.
+
 ### Honesty guards
 - **Real clock injected every turn** (`context.now_context()`). She used to answer
   "about 3:47 PM" at 09:51.
@@ -160,7 +169,8 @@ wake-after-a-long-reply.
 | Memory | top-3 recall · 12 turns · 2400-char budget · min-conf 0.6 · catch-up 5 · dedupe ≥0.88 |
 | Embeddings | `BAAI/bge-small-en-v1.5` (fastembed, CPU) |
 | Schedule | tick 2s · stale 120min · late-note 60s |
-| Progress log | 19 entries, latest **v1.9** |
+| Actions | registry of 23 openable targets · search depth 4 · top-5 results |
+| Progress log | 21 entries, latest **v1.11** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -211,24 +221,35 @@ The ten-step plan, sequenced by dependency and honest effort.
 | 4 | Voice authentication | skipped by choice |
 | 5 | Episodic + temporal memory | **done** |
 | 6 | GPU enablement | parked, externally blocked |
-| 7 | **Agentic computer use** | **NEXT — paused mid-decision** |
+| 7 | Agentic computer use (open / find / media) | **done** |
 | 8 | Skill mastery (RAG corpora + step-by-step guidance) | not started |
 | 9 | Proactive daily learning | not started |
 | 10 | Remote access (LAN / WireGuard client) | not started |
 
-**Step 7 is where work stopped.** Agentic computer use — opening apps, finding files,
-controlling media, running scripts. It is the biggest single capability jump left and
-the thing that turns her from someone to talk to into an assistant.
+**Step 7 was decided the deterministic way and built.** The open question was
+tool-calling versus a parsed registry; the registry won, for the reasons in §6 —
+an LLM round-trip costs 3-7s here, small models are unreliable at structured output,
+and a wrong action fails silently. `isha/actions/` is `parse.py` (pure, regex plus a
+registry, returns a command or None) and `run.py` (does it). It hangs off the same
+point in `_handle_utterance` as the scheduler, last in the chain, and bows out on
+reminder words so the two never fight over one sentence.
 
-The open question when work paused: **it needs dependable tool-calling, which the
-current small models do not have.** Everything structural in this project has used
-deterministic parsing precisely because small models are unreliable at structure (see
-§6). A registry of a few explicit, deterministically-parsed commands ("open Spotify",
-"find my notes on X") will almost certainly work; free-form LLM tool selection almost
-certainly will not, on this hardware. Decide that before building.
+What she can do: open anything in `CONFIG.actions.apps` (programs, folders, sites,
+protocol URLs — add a line to teach her a new one), press media keys for whatever is
+playing, and search documents/desktop/downloads for a file. Every branch tells her
+what *actually* happened, including failures, and an empty search forbids inventing a
+filename the same way the pending-reminders answer does.
 
-Also worth doing, cheap and high value: the near-duplicate memory issue is fixed but
-`isha memory --dedupe` has never been run against the real database in `--apply` mode.
+Deliberately **not** in it: deleting, moving, and running arbitrary scripts. Those are
+where a wrong deterministic match does real damage, and they need the ask-first
+treatment the reminder canceller got before they are worth having.
+
+Verified live: 12/12 phrases spoken by Piper, heard by faster-whisper, parsed as
+intended — the same mouth-to-ears trick the smoke harness uses. The real ceiling is
+the stated one: she understands the phrasings that are written down, and nothing else.
+
+`isha memory --dedupe` has now been run against the real database — clean, nothing to
+merge, so `--apply` was never needed.
 
 ---
 
@@ -275,6 +296,27 @@ different example. Two fixes worked:
 
 **Pattern:** any concrete detail in a prompt is a candidate false claim. Reactive
 examples are safe; examples that assert world-state or a past event are not.
+
+### A prompt rule the model ignores is not a rule
+The extraction prompt has always said "third person" and "not your own replies". Three
+of the nine facts in the live database were Isha's own speech filed as facts about him
+— "I'll start practicing the Indian accent." among them — where they got recalled back
+at him as things *he* had said. The fix was not a firmer prompt. It was two lines in
+`parse_extracted_facts` rejecting first-person openings and trailing question marks.
+
+**Pattern:** if a prompt rule is worth having, it is worth enforcing in code. Ask the
+model for the shape, then check the shape.
+
+### Config that only applies on first run silently rots
+`seed_if_needed` gated on "does this db have any core facts yet", so editing `seed.py`
+did nothing to an existing database. The live one was three commits stale: she was
+still calling herself a **companion** — the banned word, removed from the source in
+bf84f89 — and still naming `qwen2.5:3b` as her brain long after llama3.2 became the
+default. Now gated on a hash of the seed content, so an edit reaches her by itself.
+
+**Pattern:** "seed on first run" means "never update". If content in code is meant to
+reach a live store, gate on whether the content changed, not on whether the store is
+empty.
 
 ### A prompt directive can be copied verbatim
 A capitalised instruction came back as speech: she literally said **"I CANNOT KNOW
@@ -373,7 +415,7 @@ isha/
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 238 tests
+tests/                 281 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -382,7 +424,7 @@ diagnose.py            audio device tools
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
 .venv\Scripts\python.exe -m isha smoke          # live end-to-end, ~75s
-.venv\Scripts\python.exe -m pytest -q           # 238 tests, ~2s
+.venv\Scripts\python.exe -m pytest -q           # 281 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
@@ -420,14 +462,17 @@ diagnose.py            audio device tools
 
 ## 10. Where things stand
 
-Against the full vision in §1, this is roughly **35/100** — voice, personality, memory,
-episodic memory, timers, always-listening and the text UI all work; agentic execution,
-skill mastery, remote access, the custom voice and voice auth do not exist yet, and
-those are the hardest parts.
+Against the full vision in §1, this is roughly **45/100** — voice, personality, memory,
+episodic memory, timers, always-listening, the text UI and a first real slice of
+agentic execution all work; skill mastery, remote access, the custom voice and voice
+auth do not exist yet, and those are the hardest parts. The agentic slice is
+deliberately narrow — it opens, finds and controls, it does not delete or run.
 
 Against "something worth using every day", it is much further along — closer to 60–70%.
 She wakes, listens, remembers, keeps time, admits what she does not know, and can be
 talked to or typed at.
 
-The next real step is **agentic computer use (§5, step 7)**, starting with the decision
-about deterministic command parsing versus LLM tool-calling.
+The next real step is **skill mastery (§5, step 8)** — on-demand RAG corpora and
+step-by-step guidance. Cheaper things worth doing first: widen the action registry as
+he finds phrasings that miss, and give the destructive actions (delete, move, run) the
+ask-first treatment if they are wanted at all.

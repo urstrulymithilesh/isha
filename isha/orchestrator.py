@@ -42,6 +42,9 @@ from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
 from isha.memory.episodes import EpisodeStore, Summariser
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
+from isha.actions.parse import (MediaCommand, OpenCommand, UnknownTarget,
+                                parse_action_command)
+from isha.actions.run import ActionError, find_files, media_key, open_target
 from isha.memory.temporal import parse_temporal_query
 from isha.persona import recall_prompt
 from isha.memory.forget_parse import parse_forget_command
@@ -418,8 +421,15 @@ class Orchestrator:
             forget_note = self._handle_forget_command(text)
             if forget_note is not None:
                 extra.append(Message("system", forget_note))
-            elif self.scheduler is not None:
-                note = self._handle_schedule_command(text)
+            else:
+                note = (self._handle_schedule_command(text)
+                        if self.scheduler is not None else None)
+                # Doing things on the computer comes LAST of the deterministic parsers:
+                # "remind me to open the report at five" is a reminder, and the action
+                # parser bows out on reminder words anyway, so neither can steal the
+                # other's sentence.
+                if note is None and CONFIG.actions.enabled:
+                    note = await self._handle_action_command(text)
                 if note is not None:
                     extra.append(Message("system", note))
             # Recall questions drop the few-shot examples: they are vivid stories and
@@ -596,6 +606,65 @@ class Orchestrator:
             exchange = f"The user said: {user_text}\nYou replied: {reply}"
             self._extract_task = asyncio.create_task(
                 self._extract_facts(exchange, turn_ids=(uid, aid)))
+
+    async def _handle_action_command(self, text: str) -> str | None:
+        """Open something, press a media key, or look for a file — then tell her what
+        actually happened so she reports it instead of claiming it.
+
+        The note always says whether it worked. Nothing here is allowed to have her
+        cheerfully confirm an action that failed: an assistant that says "opened it"
+        when nothing opened is worse than one that can't open anything, because he
+        stops looking.
+
+        Blocking work runs off the loop — a file search walks real directories, and a
+        turn that stalls mid-sentence looks like a crash.
+        """
+        cmd = parse_action_command(text, CONFIG.actions.apps)
+        if cmd is None:
+            return None
+
+        if isinstance(cmd, UnknownTarget):
+            print(f"  [action] asked to open {cmd.name!r} — not in the registry")
+            return (f"He asked you to open {cmd.name!r}. You have no way to open that — it is "
+                    "not one of the things you can start, and you did NOT open it. Say that "
+                    "plainly in one short sentence, and that he can add it to your list.")
+
+        if isinstance(cmd, OpenCommand):
+            try:
+                await asyncio.to_thread(open_target, cmd.target)
+            except ActionError as e:
+                print(f"  [action] open {cmd.name!r} failed: {e}")
+                return (f"You tried to open {cmd.name} for him and it did not work. Tell him it "
+                        "failed, in one short sentence. Do not claim it opened.")
+            print(f"  [action] opened {cmd.name!r} ({cmd.target})")
+            return (f"You just opened {cmd.name} on his computer, and it worked. Say so in a few "
+                    "words — this is a small thing, not an announcement.")
+
+        if isinstance(cmd, MediaCommand):
+            try:
+                await asyncio.to_thread(media_key, cmd.action)
+            except ActionError as e:
+                print(f"  [action] media {cmd.action} failed: {e}")
+                return ("You tried to control whatever is playing and could not. Tell him it "
+                        "didn't work, briefly.")
+            print(f"  [action] media key: {cmd.action}")
+            return (f"You just pressed {cmd.action.replace('_', '/')} for whatever is playing. "
+                    "Acknowledge it in a couple of words at most — he is listening to something, "
+                    "so do not talk over it.")
+
+        hits = await asyncio.to_thread(
+            find_files, cmd.needle, CONFIG.actions.search_roots,
+            limit=CONFIG.actions.search_limit, max_depth=CONFIG.actions.search_max_depth,
+        )
+        print(f"  [action] searched for {cmd.needle!r} — {len(hits)} hit(s)")
+        if not hits:
+            return (f"He asked you to find {cmd.needle!r}. You looked through his documents, "
+                    "desktop and downloads and found NOTHING matching. Tell him you couldn't "
+                    "find it. Do NOT invent a filename or a folder.")
+        listing = "; ".join(f"{p.name} in {p.parent.name}" for p in hits)
+        return (f"He asked you to find {cmd.needle!r}. These are the complete results and the "
+                f"only ones that exist: {listing}. Read them back naturally in one or two "
+                "spoken sentences — no lists, no full paths — and do NOT invent any others.")
 
     def _handle_forget_command(self, text: str) -> str | None:
         """Actually delete what he asked her to forget, and tell her what happened so

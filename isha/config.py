@@ -121,6 +121,55 @@ class ScheduleConfig:
     overdue_note_after_seconds: int = 60  # later than this -> she admits how late it is
 
 
+def _default_apps() -> dict[str, str]:
+    """What "open X" is allowed to reach. Add a line here to teach her a new one — a
+    protocol URL, an exe on PATH, a full path, a folder, or a website.
+
+    A registry rather than "whatever he named": an open list would mean guessing at an
+    executable name from speech, and a wrong guess either does nothing or starts
+    something he didn't ask for. A miss here is recoverable — she says she doesn't have
+    that one and he adds it."""
+    home = Path.home()
+    return {
+        "spotify": "spotify:",
+        "chrome": "chrome",
+        "edge": "msedge",
+        "firefox": "firefox",
+        "notepad": "notepad",
+        "calculator": "calc",
+        "paint": "mspaint",
+        "explorer": str(home),
+        "files": str(home),
+        "file explorer": str(home),
+        "downloads": str(home / "Downloads"),
+        "documents": str(home / "Documents"),
+        "desktop": str(home / "Desktop"),
+        "code": "code",
+        "vs code": "code",
+        "vscode": "code",
+        "terminal": "wt",
+        "task manager": "taskmgr",
+        "settings": "ms-settings:",
+        "youtube": "https://www.youtube.com",
+        "github": "https://github.com",
+        "gmail": "https://mail.google.com",
+        "maps": "https://maps.google.com",
+    }
+
+
+@dataclass(frozen=True)
+class ActionsConfig:
+    enabled: bool = True
+    apps: dict[str, str] = field(default_factory=_default_apps)
+    # Where "find my ..." looks. Deliberately a short list of his own folders, not the
+    # whole drive: a full walk stalls the turn and turns up program files, not his work.
+    search_roots: tuple[Path, ...] = field(default_factory=lambda: (
+        Path.home() / "Documents", Path.home() / "Desktop", Path.home() / "Downloads",
+    ))
+    search_limit: int = 5                # most results she will read out
+    search_max_depth: int = 4            # folders deep from each root
+
+
 @dataclass(frozen=True)
 class Config:
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
@@ -129,6 +178,7 @@ class Config:
     wake: WakeConfig = field(default_factory=WakeConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
+    actions: ActionsConfig = field(default_factory=ActionsConfig)
 
 
 CONFIG = Config()

@@ -176,6 +176,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "staying however it was the day it was written",
         False,
     ),
+    ProgressEntry(
+        "v1.11 — she can do things on the computer now", "2026-08-26",
+        "she can open the programs and folders and sites he asks for, control whatever "
+        "is playing, and go looking through his files for something. She only says she "
+        "did it when it really happened, and when he asks for something she has no way "
+        "to open she says that instead of agreeing",
+        True,
+    ),
 ]
 
 
