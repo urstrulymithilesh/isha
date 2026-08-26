@@ -54,6 +54,72 @@ def subjects_mentioned(text: str, names) -> list[str]:
             if re.search(rf"\b{re.escape(n.lower())}\b", low)]
 
 
+# Common English words that can never be a trigger, however often a document uses
+# them. Without this list, sourdough.md would claim "water" and any mention of a glass
+# of water would raise baking. Function words plus the everyday nouns and verbs that
+# appear in ordinary talk about nothing in particular.
+_COMMON = frozenset("""
+about above across after again against all almost alone along already also although
+always among another answer any anyone anything around as ask asked at away back bad
+be became because become been before began begin behind being below best better
+between big both bring but by call called came can cannot care case cause certain
+change close cold come comes common could course cut day days did different do does
+doing done down during each early easy either else end enough even ever every
+everything face fact fall famous far fast feel feet fell felt few final find fine
+first five for found four free from front full gave get gets give given go goes going
+gone good got great group grow had half hand happen hard has have having he head hear
+heard held help her here high him his hold home hot hour hours house how however idea
+if important in inside instead into is it its itself just keep keeps kept kind knew
+know known large last late later learn least leave left less let letter life light
+like likely line list little live long look looked looking lot low made main make
+making man many matter may me mean means men might mind mine minute minutes moment
+month months more morning most move much must my myself name near nearly need never
+new next night no none not note nothing now number of off often old on once one only
+open or order other others our out outside over own part past people perhaps person
+place plan play point possible probably problem put question quite rather reach read
+ready real really reason rest right room round said same saw say saying says second
+seconds see seem seemed seen set seven several she short should show shown side simple
+since six small so some someone something sometimes soon sort sound start state stay
+still stop story such sure take taken talk tell ten than that the their them
+themselves then there these they thing things think third this those though thought
+three through time times to today together told too took top toward tried try turn
+turned two under understand until up upon us use used using usually very want wanted
+warm was watch water way ways we week weeks well went were what whatever when where
+whether which while white who whole whose why will wish with within without word words
+work world would write wrong year years yes yet you young your yourself
+""".split())
+
+_TRIGGER_MIN_LEN = 4       # "peg", "nut", "jam" are too short to be safe triggers
+_TRIGGER_MIN_FREQ = 2      # a word used once is incidental, not what the document is about
+
+
+def _stem_s(word: str) -> str:
+    """Naive plural fold so "strings" said aloud matches the trigger "string"."""
+    return word[:-1] if len(word) > _TRIGGER_MIN_LEN and word.endswith("s") else word
+
+
+def corpus_keywords(chunk_texts, *, max_words: int = 20) -> list[str]:
+    """The distinctive recurring words of a document — its deterministic triggers.
+
+    This exists because requiring the corpus NAME cost too much cold-start recall
+    (measured 3/12: "how often should I change the strings" retrieves nothing unless
+    the word "guitar" is said). The document itself knows its own vocabulary, so a
+    word qualifies by using only the document: long enough to be distinctive, not
+    common English, and used more than once. No embeddings anywhere — this cannot
+    drift as the corpus grows, which is what killed the distance trigger.
+    """
+    from collections import Counter
+
+    freq: Counter[str] = Counter()
+    for chunk in chunk_texts:
+        freq.update(_stem_s(w) for w in re.findall(r"[a-z]+", chunk.lower()))
+    words = [w for w, n in freq.items()
+             if len(w) >= _TRIGGER_MIN_LEN and w not in _COMMON
+             and n >= _TRIGGER_MIN_FREQ]
+    words.sort(key=lambda w: (-freq[w], w))
+    return words[:max_words]
+
+
 def chunk_text(text: str, *, chunk_chars: int = 800) -> list[str]:
     """Split on blank lines, then pack paragraphs up to the budget.
 
@@ -92,9 +158,20 @@ class CorpusStore:
             CREATE TABLE IF NOT EXISTS corpus_vectors(
                 chunk_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
             CREATE INDEX IF NOT EXISTS corpus_by_name ON corpus_chunks(corpus);
+            -- Deterministic trigger words derived from each corpus's own text.
+            CREATE TABLE IF NOT EXISTS corpus_keywords(
+                corpus TEXT NOT NULL, word TEXT NOT NULL,
+                PRIMARY KEY(corpus, word));
             """
         )
         self._conn.commit()
+        # A db from before trigger words existed has corpora but no keywords; derive
+        # them on open, same pattern as the fact store's vector backfill.
+        for name in self.names():
+            if not self._conn.execute(
+                    "SELECT 1 FROM corpus_keywords WHERE corpus=? LIMIT 1",
+                    (name,)).fetchone():
+                self._rebuild_keywords(name)
 
     # -- writing -----------------------------------------------------------
 
@@ -126,7 +203,33 @@ class CorpusStore:
                     (int(cur.lastrowid), sqlite_vec.serialize_float32(vector)))
                 stored += 1
         self._conn.commit()
+        if stored:
+            self._rebuild_keywords(corpus)
         return stored
+
+    def _rebuild_keywords(self, corpus: str) -> None:
+        texts = [r[0] for r in self._conn.execute(
+            "SELECT text FROM corpus_chunks WHERE corpus=?", (corpus,))]
+        self._conn.execute("DELETE FROM corpus_keywords WHERE corpus=?", (corpus,))
+        for word in corpus_keywords(texts):
+            self._conn.execute(
+                "INSERT OR IGNORE INTO corpus_keywords(corpus, word) VALUES(?, ?)",
+                (corpus, word))
+        self._conn.commit()
+
+    def keyword_subjects(self, text: str) -> list[str]:
+        """Corpora whose OWN vocabulary appears in what he said, without the name.
+
+        Weaker evidence than the name, and treated as weaker: the orchestrator only
+        ever ASKS on this signal, it never answers from the corpus. Measured why: real
+        cold questions and collision phrases ("my starter motor died" against a
+        sourdough corpus) overlap in embedding distance by 0.005, so any rule that
+        injected on keywords would inject on collisions too. A question is the failure
+        mode that costs one word to recover from.
+        """
+        tokens = {_stem_s(w) for w in re.findall(r"[a-z]+", text.lower())}
+        rows = self._conn.execute("SELECT corpus, word FROM corpus_keywords").fetchall()
+        return sorted({c for c, w in rows if w in tokens})
 
     def _drop_source(self, corpus: str, source: str) -> None:
         ids = [r[0] for r in self._conn.execute(
@@ -144,6 +247,7 @@ class CorpusStore:
         ids = [r[0] for r in self._conn.execute(
             "SELECT id FROM corpus_chunks WHERE corpus=?", (corpus,))]
         self._delete(ids)
+        self._conn.execute("DELETE FROM corpus_keywords WHERE corpus=?", (corpus,))
         self._conn.commit()
         return len(ids)
 

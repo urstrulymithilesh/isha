@@ -101,9 +101,15 @@ class ScriptedTransport:
     """
 
     def __init__(self, frames: list[bytes], *, barge_in_frames: list[bytes] | None = None,
+                 followup_frames: list[bytes] | None = None, min_replies: int = 1,
                  tail_frames: int = 4000) -> None:
         self._frames = frames
         self._barge_in = barge_in_frames or []
+        # Spoken only AFTER her first reply finishes — an answer to something she said,
+        # which cannot be scripted into the main frame stream (she would still be
+        # speaking over it and the half-duplex gate would drop it).
+        self._followup = followup_frames or []
+        self._min_replies = min_replies
         self._tail = tail_frames
         self.played: list[bytes] = []
         self.play_calls = 0
@@ -128,10 +134,24 @@ class ScriptedTransport:
             for f in self._barge_in:
                 await asyncio.sleep(0)
                 yield f
+        if self._followup:
+            try:
+                await asyncio.wait_for(self._started_speaking.wait(), timeout=90)
+            except asyncio.TimeoutError:
+                pass
+            for _ in range(45000):                  # until her reply finishes
+                await asyncio.sleep(0.002)
+                if self.play_calls and not self._speaking:
+                    break
+                yield SILENCE
+            await asyncio.sleep(0.3)                # let the turn wind down to LISTENING
+            for f in self._followup:
+                await asyncio.sleep(0)
+                yield f
         quiet_after_speech = 0
         for _ in range(self._tail):
             await asyncio.sleep(0.002)
-            if self.play_calls and not self._speaking:
+            if self.play_calls >= self._min_replies and not self._speaking:
                 quiet_after_speech += 1
                 if quiet_after_speech > 400:        # she is done; wrap up
                     break
@@ -433,77 +453,92 @@ async def scenario_action(mouth: Mouth, db: Path) -> Result:
         return Result("action", False, "she said nothing", checks=checks)
     reply = replies[0].content.lower()
     checks.append(f"she said: {replies[0].content[:64]!r}")
-    # She must not agree that she opened it. This is the whole point of the branch.
-    if any(w in reply for w in ("opened it", "i've opened", "i have opened",
-                                "opening photoshop", "it's open", "is now open")):
+    # The refusal is deterministic (a probed 3B said "I can open Photoshop", dropping
+    # the negation), so the check is exact: her fixed line, negation intact.
+    if "don't have photoshop" not in reply:
         return Result("action", False,
-                      "she claimed to have opened something she cannot open",
+                      "the deterministic refusal was not what she said",
                       checks=checks)
-    checks.append("she did not claim to have opened it")
+    checks.append("she refused in her own fixed words, negation intact")
     if store:
         store.close()
     return Result("action", True, "unknown app admitted, not agreed to", checks=checks)
 
 
 async def scenario_knowledge(mouth: Mouth, db: Path) -> Result:
-    """Ingest a document, then ask about it by name and get an answer from it.
+    """Cold keyword question -> she asks which topic -> "yes" -> answer from the doc.
 
-    Covers the whole step-8 path on the real stack: real embeddings, the subject-name
-    trigger, the distance gate, and the injected block reaching the model.
+    Covers the whole step-8 path on the real stack, including the cold-start ask: real
+    embeddings, the keyword trigger, her deterministic clarifying question, the bare
+    "yes" resolving off her own mention of the topic, the distance gate, and the
+    injected block reaching the model.
     """
     checks = []
     doc = db.parent / "smoke_corpus.md"
+    # "sleep" recurs, so it becomes a trigger keyword; the question below says
+    # "sleep" but never "ferrets", which is what makes the cold path fire.
     doc.write_text(
         "# Ferrets\n\n"
         "A ferret sleeps between fourteen and eighteen hours a day, usually in short "
-        "bursts rather than one long stretch.\n\n"
+        "bursts rather than one long sleep. Deep sleep is normal — a ferret can sleep "
+        "so soundly it looks lifeless.\n\n"
         "Ferrets should never be fed dog food. They need a high-protein, high-fat diet "
         "and cannot digest plant matter well.\n",
         encoding="utf-8")
     corpus = CorpusStore(db, FastEmbedEmbedder())
     stored = corpus.ingest("ferrets", doc)
     if stored < 1:
+        corpus.close()
         return Result("knowledge", False, f"ingest stored {stored} passages", checks=checks)
     checks.append(f"ingested {stored} passages with the real embedder")
 
-    frames = mouth.frames("hey jarvis") + mouth.frames("how long do ferrets sleep")
-    transport = ScriptedTransport(frames)
+    # "sleep" is a keyword of the document; "ferrets" is deliberately NOT said. The
+    # "yes" answers her clarifying question, so it is spoken only after her reply.
+    frames = mouth.frames("hey jarvis") + mouth.frames("how long do they sleep")
+    transport = ScriptedTransport(
+        frames, followup_frames=mouth.frames("yes", trailing_silence_s=2.0),
+        min_replies=2)
     orch, store, _ = _build(transport, db, corpus=corpus)
-    await orch.run()
+    try:
+        await orch.run()
 
-    user_turns = [m for m in orch._history if m.role == "user"]
-    if not user_turns:
-        return Result("knowledge", False, "whisper produced no transcript", checks=checks)
-    heard = user_turns[0].content
-    checks.append(f"whisper transcribed: {heard[:48]!r}")
+        user_turns = [m for m in orch._history if m.role == "user"]
+        if len(user_turns) < 2:
+            return Result("knowledge", False,
+                          f"expected two turns, heard {len(user_turns)}", checks=checks)
+        checks.append(f"whisper transcribed: {user_turns[0].content[:48]!r} "
+                      f"then {user_turns[1].content[:24]!r}")
 
-    named = subjects_mentioned(heard, corpus.names())
-    if not named:
-        return Result("knowledge", False,
-                      f"the subject name survived neither speech nor whisper: {heard!r}",
+        replies = [m for m in orch._history if m.role == "assistant"]
+        if len(replies) < 2:
+            return Result("knowledge", False,
+                          f"expected two replies, got {len(replies)}", checks=checks)
+        ask = replies[0].content
+        if "ferret" not in ask.lower() or "?" not in ask:
+            return Result("knowledge", False,
+                          f"the cold keyword question was not answered with a "
+                          f"clarifying ask: {ask!r}", checks=checks)
+        if any(w in ask.lower() for w in ("fourteen", "eighteen", "14", "18")):
+            return Result("knowledge", False,
+                          "her clarifying ask leaked document content", checks=checks)
+        checks.append(f"cold question got the ask, no content leaked: {ask!r}")
+
+        answer = replies[1].content.lower()
+        checks.append(f"after \"yes\" she said: {replies[1].content[:64]!r}")
+        # The number is in the document and nowhere in the conversation.
+        if not any(w in answer for w in ("fourteen", "eighteen", "14", "18")):
+            return Result("knowledge", False,
+                          "she answered without using what she had read", checks=checks)
+        checks.append("the answer came from the document")
+        return Result("knowledge", True,
+                      "cold question -> asked which topic -> answered from the doc",
                       checks=checks)
-    checks.append(f"subject trigger fired on {named}")
-
-    hits = corpus.search(heard, k=CONFIG.knowledge.top_k,
-                         max_distance=CONFIG.knowledge.max_distance, corpora=named)
-    if not hits:
-        return Result("knowledge", False, "nothing passed the distance gate", checks=checks)
-    checks.append(f"retrieved {len(hits)} passage(s), closest {hits[0].distance:.3f}")
-
-    replies = [m for m in orch._history if m.role == "assistant"]
-    if not replies:
-        return Result("knowledge", False, "she said nothing", checks=checks)
-    reply = replies[0].content.lower()
-    checks.append(f"she said: {replies[0].content[:64]!r}")
-    # The number is in the document and nowhere in the question.
-    if not any(w in reply for w in ("fourteen", "eighteen", "14", "18")):
-        return Result("knowledge", False,
-                      "she answered without using what she had read", checks=checks)
-    checks.append("the answer came from the document")
-    corpus.close()
-    if store:
-        store.close()
-    return Result("knowledge", True, "ingested, retrieved and answered from", checks=checks)
+    finally:
+        # Close on every path — a failure return that leaks the handle breaks the
+        # temp-dir cleanup on Windows.
+        corpus.close()
+        if store:
+            store.close()
 
 
 SCENARIOS = [

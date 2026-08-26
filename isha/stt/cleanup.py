@@ -18,8 +18,14 @@ from __future__ import annotations
 
 import re
 
-# Filler that often precedes or surrounds the wake word in a transcript.
-_FILLER = {"hey", "hi", "hello", "ok", "okay", "um", "uh", "so"}
+# Filler that often precedes or surrounds the wake word in a transcript. The odd ones
+# ("a", "they", "eight") are what whisper actually makes of a half-heard "hey": a live
+# smoke run transcribed "hey jarvis" as "8 Jarvis", the junk prefix survived, and the
+# action parser missed — whereupon she claimed "Photoshop opens." about nothing.
+# Digits are handled in the loop for the same reason. All of these strip ONLY when a
+# real wake token follows, so "they said hi" and "8 times 8" are untouched.
+_FILLER = {"hey", "hi", "hello", "ok", "okay", "um", "uh", "so", "a", "hay",
+           "they", "eight", "hate"}
 _LEADING_PUNCT = re.compile(r"^[\s,.!?;:\-—]+")
 
 
@@ -39,13 +45,13 @@ def strip_wake_prefix(text: str, wake_model: str) -> str:
     consumed = 0
     limit = len(wake_tokens) + 2          # the wake words themselves, plus a filler or two
     while consumed < limit:
-        match = re.match(r"([A-Za-z']+)", cursor)
+        match = re.match(r"([A-Za-z']+|\d+)", cursor)
         if not match:
             break
         word = match.group(1).lower()
         if word in wake_tokens:
             saw_wake_token = True
-        elif not saw_wake_token and word in _FILLER:
+        elif not saw_wake_token and (word in _FILLER or word.isdigit()):
             pass                          # leading filler BEFORE the wake word ("hey ...")
         else:
             # Filler only counts ahead of the wake word. Past it, a word like "hello"

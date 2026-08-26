@@ -200,6 +200,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "was going to start doing that at the worst moments as she read more",
         False,
     ),
+    ProgressEntry(
+        "v1.14 — she asks instead of missing, and asks instead of guessing", "2026-08-26",
+        "when he asks about something she has read without naming it, she no longer "
+        "stays silent — she asks whether he means that thing, and a yes gets the real "
+        "answer. And when he asks her to open something she does not have, what she "
+        "says now is always the truth, because for a moment she was heard claiming "
+        "she could open it when she could not",
+        False,
+    ),
 ]
 
 

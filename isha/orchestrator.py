@@ -139,6 +139,22 @@ def _asks_what_next(text: str) -> bool:
     return any(p in t for p in _NEXT_STEP_PATTERNS)
 
 
+# A short "yes" — the shape of an answer to her own clarifying question. Only these
+# get the previous user turn attached to the retrieval query. Without this condition
+# the attachment is a leak: after "my starter motor died" -> her ask -> "no, my car",
+# the words "starter motor" rode along in the query and retrieved sourdough anyway.
+# A declined ask must decay, not chase him.
+_AFFIRMATIONS = frozenset((
+    "yes", "yeah", "yep", "yup", "sure", "right", "exactly", "correct", "please",
+    "ok", "okay", "aye", "definitely", "obviously", "that",
+))
+
+
+def _is_short_affirmation(text: str) -> bool:
+    words = [w.strip(".,!?'") for w in text.lower().split()]
+    return 0 < len(words) <= 6 and any(w in _AFFIRMATIONS for w in words)
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -418,10 +434,24 @@ class Orchestrator:
             # follow-ups work without repeating the word every time. Skipped in recall
             # mode: a question about last Tuesday wants the record, not a document.
             if self.corpus is not None and not recall_mode:
-                recent = " ".join(m.content for m in self._history[-CONFIG.knowledge.topic_turns:])
-                named = subjects_mentioned(f"{recent} {text}", self.corpus.names())
+                names = self.corpus.names()
+                named_now = subjects_mentioned(text, names)
+                # _history already holds the current utterance; scan the turns before it.
+                prior = self._history[-(CONFIG.knowledge.topic_turns + 1):-1]
+                named_recent = subjects_mentioned(
+                    " ".join(m.content for m in prior), names)
+                named = sorted(set(named_now) | set(named_recent))
+                query = text
+                if named and not named_now and _is_short_affirmation(text):
+                    # A bare "yes" — his answer to her own clarifying question. Those
+                    # words alone cannot reach the passage, so the previous user turn
+                    # (the original question) rides along as the query. ONLY on a short
+                    # affirmation: on anything else the attachment leaks the old phrase
+                    # into queries it has no business in.
+                    prev = next((m.content for m in reversed(prior) if m.role == "user"), "")
+                    query = f"{prev} {text}".strip()
                 passages = self.corpus.search(
-                    text, k=CONFIG.knowledge.top_k,
+                    query, k=CONFIG.knowledge.top_k,
                     max_distance=CONFIG.knowledge.max_distance,
                     corpora=named) if named else []
                 block = knowledge_context(
@@ -436,6 +466,37 @@ class Orchestrator:
                     recall_mode = True
                     print(f"  [knowledge] {len(passages)} passage(s) from "
                           f"{passages[0].corpus!r} (closest {passages[0].distance:.3f})")
+                elif not named:
+                    # No subject named, but his words overlap a document's own
+                    # vocabulary ("strings", "starter"). Weaker evidence, so she asks
+                    # instead of answering — cold-start recall was 3/12 on the name
+                    # alone, and injecting on keywords is unsafe (collision phrases and
+                    # real questions measure 0.005 apart). Asking puts the corpus name
+                    # into the transcript, so a yes flows into normal retrieval above.
+                    maybe = self.corpus.keyword_subjects(text)
+                    hits = self.corpus.search(
+                        text, k=1, max_distance=CONFIG.knowledge.max_distance,
+                        corpora=maybe) if maybe else []
+                    if hits:
+                        # The ask is DETERMINISTIC — fixed words, no LLM turn. Probed
+                        # the prompted version live first: a soft note answered from
+                        # pretraining 3/3 ("every 3-4 months", invented), and a
+                        # hardened note asked but only said the topic word 2/3 — and
+                        # the resolution NEEDS that word in the transcript, because a
+                        # bare "yes" resolves off her own mention of it. An ask whose
+                        # output feeds a deterministic trigger is structural, and
+                        # structural things in this project are not delegated to a 3B.
+                        # Bonus: no round-trip, so the question lands in under a second.
+                        topic = hits[0].corpus
+                        print(f"  [knowledge] his words brush {topic!r} — asking, "
+                              f"not answering (closest {hits[0].distance:.3f})")
+                        ask = f"Are you asking about your {topic}?"
+                        await self._speak(ask)
+                        if self.text_channel is not None:
+                            self.text_channel.log("isha", ask)
+                        self._history.append(Message("assistant", ask))
+                        self._remember_turn(text, ask)
+                        return
             if _asks_about_shared_history(text) and self.store is not None:
                 extra.append(shared_history_context(self.store.all_facts()))
                 recall_mode = True
@@ -458,6 +519,8 @@ class Orchestrator:
                 # other's sentence.
                 if note is None and CONFIG.actions.enabled:
                     note = await self._handle_action_command(text)
+                    if note == "":     # already answered deterministically, in full
+                        return
                 if note is not None:
                     extra.append(Message("system", note))
             # Recall questions drop the few-shot examples: they are vivid stories and
@@ -652,10 +715,19 @@ class Orchestrator:
             return None
 
         if isinstance(cmd, UnknownTarget):
+            # Deterministic, like the knowledge ask, and for the same measured reason:
+            # this sentence is honesty-critical and hangs on a negation, and probed
+            # live the 3B dropped the negation — it said "I can open Photoshop." about
+            # an app it cannot open. A claim of ability is not delegable to a model
+            # that loses the word "not" one time in three.
             print(f"  [action] asked to open {cmd.name!r} — not in the registry")
-            return (f"He asked you to open {cmd.name!r}. You have no way to open that — it is "
-                    "not one of the things you can start, and you did NOT open it. Say that "
-                    "plainly in one short sentence, and that he can add it to your list.")
+            line = f"I don't have {cmd.name} — that's not something I can open."
+            await self._speak(line)
+            if self.text_channel is not None:
+                self.text_channel.log("isha", line)
+            self._history.append(Message("assistant", line))
+            self._remember_turn(text, line)
+            return ""      # sentinel: the turn is already answered, nothing for the LLM
 
         if isinstance(cmd, OpenCommand):
             try:

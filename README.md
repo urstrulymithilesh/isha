@@ -56,9 +56,10 @@ Working end to end, offline:
 
 - **Things she has read** — `python -m isha learn guitar ./notes/guitar.md`. Documents
   are chunked, embedded, and retrieved when he *names the subject* (in that sentence or
-  a recent turn), so a corpus never barges into small talk. She answers from the
-  passages or says they don't cover it — right about five times in six, which is the
-  honest number, not a solved problem.
+  a recent turn), so a corpus never barges into small talk. If his words merely brush a
+  document's own vocabulary, she asks — "Are you asking about your guitar?" — and a yes
+  gets the answer. She answers from the passages or says they don't cover it — right
+  about five times in six, which is the honest number, not a solved problem.
 
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.

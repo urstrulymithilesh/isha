@@ -218,17 +218,18 @@ class _Silence:
 
 
 class _NoFrames:
-    async def frames(self):
+    async def capture(self):
         return
         yield b""       # pragma: no cover - never reached, makes this an async generator
 
-    def play(self, pcm, sample_rate=None):
+    async def play(self, frames, *, sample_rate=None):
+        for _ in frames:
+            pass
+
+    def mute_input(self):
         pass
 
-    def mute(self):
-        pass
-
-    def unmute(self):
+    def unmute_input(self):
         pass
 
 
@@ -261,9 +262,15 @@ def test_a_failed_open_never_claims_success(monkeypatch):
     assert "did not work" in note and "Do not claim it opened" in note
 
 
-def test_an_app_she_does_not_have_is_admitted(monkeypatch):
-    note = _note("open photoshop", monkeypatch, open_target=lambda t: None)
-    assert "did NOT open it" in note
+def test_an_app_she_does_not_have_is_refused_in_her_own_deterministic_words(monkeypatch):
+    """Not a prompt note: probed live, the 3B dropped the negation and said "I can
+    open Photoshop." A claim of ability is spoken deterministically or not at all."""
+    orch = _orch()
+    note = asyncio.run(orch._handle_action_command("open photoshop"))
+    assert note == ""                      # turn already answered, nothing for the LLM
+    said = orch._history[-1].content
+    assert "don't have photoshop" in said.lower()
+    assert "not something I can open" in said
 
 
 def test_an_empty_search_forbids_inventing_a_filename(monkeypatch):

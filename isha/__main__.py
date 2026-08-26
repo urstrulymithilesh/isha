@@ -257,13 +257,23 @@ def _learn_cmd(argv: list[str]) -> int:
         from isha.memory.corpus import subjects_mentioned
         question = rest[0]
         named = subjects_mentioned(question, store.names())
-        if not named:
-            print(f"No subject named in {question!r} — she would retrieve NOTHING.")
-            print(f"She knows these subjects: {', '.join(store.names()) or '(none)'}.")
-            print("Naming one, in this sentence or a recent turn, is what triggers "
-                  "retrieval.\n")
+        if named:
+            print(f"Subject named: {', '.join(named)}. She answers from it.\n")
         else:
-            print(f"Subject named: {', '.join(named)}. Searching only there.\n")
+            maybe = store.keyword_subjects(question)
+            hits = store.search(question, k=1,
+                                max_distance=CONFIG.knowledge.max_distance,
+                                corpora=maybe) if maybe else []
+            if hits:
+                print(f"No subject named, but the words brush {hits[0].corpus!r} "
+                      f"(closest {hits[0].distance:.3f}).")
+                print(f"She would ASK — \"Are you asking about your "
+                      f"{hits[0].corpus}?\" — and answer after a yes.\n")
+            else:
+                print(f"No subject named and no trigger word — she treats this as "
+                      f"ordinary talk.")
+                print(f"She knows these subjects: "
+                      f"{', '.join(store.names()) or '(none)'}.\n")
         # No distance gate on the printout: this is the tool for CHOOSING the gate, so
         # it has to show the near misses too. `USED` reflects BOTH gates, so what it
         # prints is what she would actually get.

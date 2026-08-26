@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `ec314fd`. 313 tests, 50 commits, 78 files, ~9.7k lines of
+Last updated at commit `HEAD`. 320 tests, 51 commits, 78 files, ~9.9k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -142,16 +142,23 @@ boundaries, embeds it, and stores it in a named corpus in the same db. `--list` 
 what she has read, `--forget <name>` drops a corpus whole, `--ask "..."` shows what
 she would retrieve and how close it scored.
 
-**The trigger is naming the subject**, not the distance. The first design used the
-distance alone and it did not survive a second document — see §6. Retrieval fires when
-a corpus NAME appears in what he just said or in the last `topic_turns` (4) turns, and
-the distance gate (0.46) then filters *within* that subject.
+**The trigger is his words, in two tiers.** A corpus NAME in the current or last
+`topic_turns` (4) turns fires retrieval, with the distance gate (0.46) filtering
+*within* that subject. Failing that, a corpus **keyword** — derived deterministically
+from the document's own recurring distinctive words at ingest, no embeddings — makes
+her **ask**: a fixed, deterministic "Are you asking about your {topic}?". Never an
+answer, never injected content. Her own mention of the name then sits in the
+transcript, so a bare "yes" resolves into normal retrieval (the previous user turn
+rides along as the query, but only on a short affirmative — anything else would leak
+the old phrase into queries it has no business in, which is exactly what happened on
+the first attempt when a declined ask kept chasing him).
 
-Measured on two corpora: cold, with the subject never mentioned, recall is **3/12** —
-he has to name it once. Once named, follow-ups are **12/12**, and false fires are
-**0/12** even while a subject is live. That trade is the point: a missed retrieval is a
-question she answers without the document; a false one drops a paragraph about guitar
-strings into a conversation about his day.
+Measured on two corpora, held-out sets: cold questions **12/12 useful** (3 retrieve +
+9 ask; was 3/12), chit-chat **12/12 nothing**, adversarial keyword collisions ("my
+starter motor died") **0/8 injections** — 3/8 get the clarifying question, which costs
+one word to wave off. The ask is deterministic because the probed alternatives failed:
+a soft prompt answered from pretraining 3/3 (invented "every 3-4 months"), a hardened
+prompt asked but said the topic word only 2/3 — and the resolution needs that word.
 
 ### Honesty guards
 - **Real clock injected every turn** (`context.now_context()`). She used to answer
@@ -175,7 +182,9 @@ so this genuinely triggers it). Uses temporary databases; never touches real mem
 Scenarios: conversation, memory store+recall, timer fires, barge-in,
 wake-after-a-long-reply, **action** (an app she does not have — the only action branch
 safe to run headless, since a passing "open Spotify" would open Spotify on every run),
-**knowledge** (ingest, subject trigger, retrieve, answer from the document). ~122s.
+**knowledge** (cold keyword question -> her deterministic ask -> "yes" -> answer
+from the document). ~122s. The knowledge scenario runs a real two-turn conversation:
+the transport can deliver follow-up speech only after her first reply finishes.
 
 ---
 
@@ -194,8 +203,8 @@ safe to run headless, since a passing "open Spotify" would open Spotify on every
 | Embeddings | `BAAI/bge-small-en-v1.5` (fastembed, CPU) |
 | Schedule | tick 2s · stale 120min · late-note 60s |
 | Actions | registry of 23 openable targets · search depth 4 · top-5 results |
-| Knowledge | subject-name trigger · 4 topic turns · top-2 · 800-char chunks · gate 0.46 |
-| Progress log | 23 entries, latest **v1.13** |
+| Knowledge | name trigger + keyword-ask · 4 topic turns · top-2 · 800-char chunks · gate 0.46 |
+| Progress log | 24 entries, latest **v1.14** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -352,6 +361,24 @@ Register loses to accuracy here, same as it did for memory questions.
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
 
+### A negation is not delegable to a 3B
+Two sentences in this codebase hang entirely on honesty: "I did not open that" and
+"I cannot answer that yet". Both were prompt notes; both failed when probed live. The
+unknown-app note came back as **"I can open Photoshop."** — the model dropped the
+negation outright, roughly one run in three. The knowledge clarifying-ask lost to the
+persona 3/3 (answered from pretraining, invented "every 3-4 months"), and a hardened
+prompt asked but said the topic word only 2/3 — with the resolution depending on that
+word being in the transcript. Both sentences are now spoken **deterministically**:
+fixed words, no LLM turn, and as a bonus they land in under a second.
+
+**Pattern:** if a sentence's truth depends on a single word surviving (a "not", a
+name), a small model is not a channel for it. Deterministic speech for structural
+sentences, the model for everything conversational. Also: the smoke check that
+guarded this was itself wrong twice — it pattern-matched "opening photoshop" inside
+an honest "no way of opening Photoshop" (false fail) and missed "I can open
+Photoshop" (false pass). A check on a deterministic sentence can be exact; prefer
+that over guessing at phrasings.
+
 ### An embedding threshold is not a trigger
 The knowledge retrieval shipped with the distance gate AS the trigger — no parser, no
 keyword list. It measured beautifully on one document and broke on the second.
@@ -485,7 +512,7 @@ isha/
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 313 tests
+tests/                 320 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -494,7 +521,7 @@ diagnose.py            audio device tools
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
 .venv\Scripts\python.exe -m isha smoke          # live end-to-end, 7 scenarios, ~2min
-.venv\Scripts\python.exe -m pytest -q           # 313 tests, ~2s
+.venv\Scripts\python.exe -m pytest -q           # 320 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
@@ -556,10 +583,15 @@ her a new app without editing `config.py`.
   "Re-soon." and "skip" as "Skit."; two-word forms ("skip this", "pause the music") are
   reliable. Not a parser bug and not fixable there — fuzzy-matching short words would
   fire on real ones.
-- **Cold-start knowledge recall is 3/12** by design (see §2) — he must name the subject
-  once per topic.
+- **Cold-start knowledge: 9 of 12 cold questions cost one clarifying turn** ("Are you
+  asking about your X?"). Collisions ("my starter motor died") get the same question
+  ~3/8 — one word to wave off, never an injection. A declined topic still lingers in
+  history for 4 turns, so repeating the collision phrase right after declining can
+  retrieve (pre-existing stickiness hole, unchanged).
 - **Adding an app means editing `config.py`.** Fine for now, annoying eventually.
 - **Wake word is still `hey_jarvis` for BOTH wake and stop.** Parked by choice (§4).
+  Whisper sometimes hears it as "8 Jarvis" / "A Jarvis" — the prefix stripper now
+  eats those, but expect new spellings; add them to `_FILLER` in `stt/cleanup.py`.
 - `.pdf` is not an ingestable format — `.txt`, `.md`, `.markdown`, `.rst` only.
 
 Step 8's **step-by-step guidance mode** ("walk me through it") was deliberately not

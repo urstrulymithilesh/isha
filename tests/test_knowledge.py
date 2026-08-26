@@ -131,6 +131,66 @@ def test_search_can_be_restricted_to_named_corpora(tmp_path):
     assert s.search("guitar", max_distance=9, corpora=[]) == []
 
 
+def test_corpus_keywords_are_the_documents_recurring_distinctive_words():
+    from isha.memory.corpus import corpus_keywords
+    chunks = [
+        "Tune the guitar string by the fifth fret. A string settles after tuning.",
+        "Change strings when dull. The fret edges poke out when the guitar is dry.",
+    ]
+    words = corpus_keywords(chunks)
+    assert "string" in words          # recurring, distinctive ("strings" folds in)
+    assert "fret" in words
+    assert "the" not in words         # common English never triggers
+    assert "settles" not in words     # used once = incidental, not the subject
+    assert "dry" not in words         # under four letters
+
+
+def test_keywords_persist_and_survive_forget(tmp_path):
+    doc = tmp_path / "g.md"
+    doc.write_text("guitar string tuning\n\nstring tuning fret fret", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc, chunk_chars=25)
+    assert s.keyword_subjects("my string snapped") == ["guitar"]
+    s.forget("guitar")
+    assert s.keyword_subjects("my string snapped") == []
+
+
+def test_keywords_are_backfilled_for_a_pre_keyword_db(tmp_path):
+    """The live db was ingested before trigger words existed."""
+    doc = tmp_path / "g.md"
+    doc.write_text("string tuning\n\nstring tuning", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc, chunk_chars=15)
+    s._conn.execute("DELETE FROM corpus_keywords")
+    s._conn.commit()
+    s.close()
+    s2 = _store(tmp_path)
+    assert s2.keyword_subjects("the tuning is off") == ["guitar"]
+
+
+def test_keyword_match_folds_plurals_and_respects_word_boundaries(tmp_path):
+    doc = tmp_path / "g.md"
+    doc.write_text("string tuning\n\nstring tuning", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc, chunk_chars=15)
+    assert s.keyword_subjects("my strings snapped") == ["guitar"]   # strings -> string
+    assert s.keyword_subjects("he strung me along") == []           # not a variant
+    assert s.keyword_subjects("restring it") == []                  # substring, no fire
+
+
+def test_short_affirmation_shapes():
+    """Only these attach the previous turn to the retrieval query. "no, my car" must
+    NOT — that attachment is how a declined ask chased him with the old phrase."""
+    from isha.orchestrator import _is_short_affirmation
+    assert _is_short_affirmation("yes")
+    assert _is_short_affirmation("Yeah, that.")
+    assert _is_short_affirmation("okay sure")
+    assert not _is_short_affirmation("no, my car")
+    assert not _is_short_affirmation("anyway, how was your day")
+    assert not _is_short_affirmation("yes but let me tell you about my whole morning first")
+    assert not _is_short_affirmation("")
+
+
 def test_an_unrelated_question_retrieves_nothing(tmp_path):
     """The gate IS the trigger — there is no keyword parser in front of this, so a
     loose gate is the difference between a useful passage and a document barging into

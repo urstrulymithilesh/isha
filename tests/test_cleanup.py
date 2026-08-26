@@ -41,3 +41,17 @@ def test_ordinary_speech_is_untouched():
 def test_adapts_to_a_different_wake_model():
     assert strip_wake_prefix("Alexa, what time is it", "alexa") == "what time is it"
     assert strip_wake_prefix("Hey Mycroft, hello", "hey_mycroft") == "hello"
+
+
+def test_whisper_mishearings_of_hey_before_the_wake_token_are_stripped():
+    """Live smoke run: "hey jarvis" came back as "8 Jarvis", the junk survived, the
+    action parser missed, and she claimed "Photoshop opens." about nothing."""
+    assert strip_wake_prefix("8 Jarvis Open Photoshop", "hey_jarvis") == "Open Photoshop"
+    assert strip_wake_prefix("A Jarvis, set a timer", "hey_jarvis") == "set a timer"
+    assert strip_wake_prefix("They Jarvis, hello", "hey_jarvis") == "hello"
+
+
+def test_digits_and_odd_filler_without_a_wake_token_are_untouched():
+    assert strip_wake_prefix("8 times 8 is 64", "hey_jarvis") == "8 times 8 is 64"
+    assert strip_wake_prefix("They said hi to me", "hey_jarvis") == "They said hi to me"
+    assert strip_wake_prefix("A dog barked", "hey_jarvis") == "A dog barked"
