@@ -168,6 +168,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "end of every other sentence",
         True,
     ),
+    ProgressEntry(
+        "v1.10 — she stopped mistaking her own words for his", "2026-08-26",
+        "some of what she thought she knew about him was really just things she had "
+        "said herself, filed away as if he had said them. Those cannot get in any more. "
+        "And what she knows about her own build now keeps up with her instead of "
+        "staying however it was the day it was written",
+        False,
+    ),
 ]
 
 

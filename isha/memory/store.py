@@ -456,6 +456,14 @@ class SqliteMemoryStore:
 
     # -- misc --------------------------------------------------------------
 
+    def get_meta(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if row is None else row[0]
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)", (key, value))
+        self._conn.commit()
+
     def _log(self, action: str, fact: Fact) -> None:
         if self._log_path is None:
             return

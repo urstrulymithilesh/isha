@@ -14,6 +14,7 @@ Expected shape from the model: a JSON array of objects, e.g.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 
 from isha.core.interfaces import LLM, Fact, Message
@@ -56,6 +57,22 @@ def _strip_code_fence(raw: str) -> str:
     return s
 
 
+_FIRST_PERSON = re.compile(r"^(i|i'm|i'll|i've|i'd|my|me|we|we're|our)\b", re.IGNORECASE)
+
+
+def _is_junk(text: str) -> bool:
+    """Reject shapes that cannot be a durable third-person fact about the user.
+
+    The prompt already asks for third person and forbids the model's own replies, and the
+    model ignores it: the live db had "I'll start practicing the Indian accent." and
+    "What would you like to practice?" filed as facts about him. Both are Isha's own
+    speech, and once stored they get recalled back at him as things he said. Same call as
+    everywhere else in this project — a small model is unreliable at a rule, so enforce
+    the rule in code instead of asking louder.
+    """
+    return text.endswith("?") or bool(_FIRST_PERSON.match(text))
+
+
 def parse_extracted_facts(raw: str, *, min_confidence: float = 0.6) -> list[Fact]:
     """Best-effort parse. Returns [] on any malformed input; filters out items with
     no usable text or confidence below the gate."""
@@ -75,6 +92,9 @@ def parse_extracted_facts(raw: str, *, min_confidence: float = 0.6) -> list[Fact
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
+        text = text.strip()
+        if _is_junk(text):
+            continue
         conf = item.get("confidence")
         if isinstance(conf, bool) or not isinstance(conf, (int, float)):
             continue
@@ -82,5 +102,5 @@ def parse_extracted_facts(raw: str, *, min_confidence: float = 0.6) -> list[Fact
             continue
         subject = item.get("subject")
         subject = subject.strip() if isinstance(subject, str) and subject.strip() else None
-        facts.append(Fact(text=text.strip(), confidence=float(conf), subject=subject))
+        facts.append(Fact(text=text, confidence=float(conf), subject=subject))
     return facts

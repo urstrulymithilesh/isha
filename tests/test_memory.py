@@ -175,6 +175,27 @@ def test_parse_tolerates_code_fence():
     assert len(facts) == 1 and "python" in facts[0].text
 
 
+def test_parse_drops_her_own_speech_and_questions():
+    """Live db junk: three of nine learned facts were Isha's own lines, filed as facts
+    about him. The prompt already forbids it; the model does it anyway."""
+    raw = ("[{\"subject\":\"practicing\",\"text\":\"I'll start practicing the Indian accent.\",\"confidence\":0.9},"
+           "{\"subject\":\"mood\",\"text\":\"I'm energized, though.\",\"confidence\":0.6},"
+           '{"subject":"practicing2","text":"I will start practicing the Indian accent.","confidence":0.9},'
+           '{"subject":"energy","text":"I am energized, though.","confidence":0.6},'
+           '{"subject":"accent","text":"What would you like to practice with that accent?","confidence":0.7},'
+           '{"subject":"gym","text":"the user goes to the gym on Tuesdays","confidence":0.9}]')
+    facts = parse_extracted_facts(raw)
+    assert [f.subject for f in facts] == ["gym"]
+
+
+def test_parse_keeps_facts_that_merely_contain_i_or_a_question_mark():
+    """Only the SHAPE is rejected — first word, or a trailing '?'. A real fact that
+    happens to quote him must survive."""
+    raw = ('[{"subject":"job","text":"the user said I should ask about his job","confidence":0.9},'
+           "{\"subject\":\"band\",\"text\":\"the user's favourite band is Wire\",\"confidence\":0.9}]")
+    assert len(parse_extracted_facts(raw)) == 2
+
+
 # -- protection + history gating + seeding ----------------------------------
 
 
@@ -211,7 +232,23 @@ def test_seed_plants_protected_facts_and_is_idempotent():
     s = _store()
     assert seed(s) > 0
     assert any(f.origin == "core" and "Isha" in f.text for f in s.all_facts())
-    assert seed_if_needed(s) == 0  # core facts already present -> no-op
+    assert seed_if_needed(s) == 0  # unchanged content -> no-op
+
+
+def test_edited_seed_content_reaches_an_already_seeded_db():
+    """The old gate was "any core facts?", so editing seed.py did nothing to a live db.
+    She kept calling herself a companion and naming a model she no longer ran on."""
+    from isha.memory import seed as seed_mod
+    s = _store()
+    seed_mod.seed(s)
+    original = seed_mod.CORE_FACTS[0]
+    seed_mod.CORE_FACTS[0] = Fact(subject=original.subject, text="the AI partner's name is Isha, v2",
+                                  confidence=1.0, origin="core")
+    try:
+        assert seed_mod.seed_if_needed(s) > 0
+        assert any("v2" in f.text for f in s.all_facts())
+    finally:
+        seed_mod.CORE_FACTS[0] = original
 
 
 # -- unprocessed-exchange tracking (extraction retry) -----------------------
