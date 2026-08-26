@@ -373,11 +373,42 @@ fixed words, no LLM turn, and as a bonus they land in under a second.
 
 **Pattern:** if a sentence's truth depends on a single word surviving (a "not", a
 name), a small model is not a channel for it. Deterministic speech for structural
-sentences, the model for everything conversational. Also: the smoke check that
-guarded this was itself wrong twice — it pattern-matched "opening photoshop" inside
-an honest "no way of opening Photoshop" (false fail) and missed "I can open
-Photoshop" (false pass). A check on a deterministic sentence can be exact; prefer
-that over guessing at phrasings.
+sentences, the model for everything conversational.
+
+**This is the same failure as the spoken-forget bug** (bf84f89), which is worth
+seeing as one class rather than two anecdotes. There, she said "of course I'll forget
+that" while the fact stayed in the database. Here, she said "I can open Photoshop"
+about an app she cannot open. In both, the model produced a fluent sentence
+*asserting something about her own actions or abilities* that was false — and in both,
+the failure is invisible to him, because a confident sentence is exactly what a true
+one looks like. He stops checking, which is the real cost.
+
+The obvious generalisation — *every* self-report must be deterministic — was tested
+and is **wrong**, which is worth knowing before someone rewrites four working
+handlers. The remaining prompt notes were probed 5 runs each and all held:
+
+| note | honest |
+|---|---|
+| open FAILED ("do not claim it opened") | 5/5 |
+| media control FAILED | 5/5 |
+| file search found NOTHING | 5/5 |
+| no reminders pending | 5/5 |
+
+The line is narrower than "self-report". Those four report an **event that happened**,
+and the note itself carries the outcome, so there is nothing for the model to supply.
+The two that failed asked her to assert a **capability or a refusal** — "you have no
+way to open that", "do not answer yet" — which is a claim about *what she is*, and it
+runs straight into a persona built to be capable and willing. The persona wins.
+
+So: **a sentence claiming what she can't do, or refusing to act, is structural. A
+sentence reporting what just happened can stay a prompt note** — provided the note
+states the outcome rather than asking her to work it out. Probe before converting; the
+audit above found nothing else to change.
+
+Corollary, learned the hard way here: the smoke check guarding this was itself wrong
+twice — it pattern-matched "opening photoshop" inside an honest "no way of opening
+Photoshop" (false fail) and missed "I can open Photoshop" (false pass). A check on a
+deterministic sentence can be exact; prefer that over guessing at phrasings.
 
 ### An embedding threshold is not a trigger
 The knowledge retrieval shipped with the distance gate AS the trigger — no parser, no
