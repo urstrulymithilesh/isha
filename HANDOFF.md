@@ -25,10 +25,15 @@ Standing workflow, done automatically without being asked:
    growth, written in her voice, plain language, not a changelog. `significant=True`
    only for a real capability change.
 5. Commit with a message that explains the *why*, including measurements.
-6. Push.
+6. **Push immediately.** Commits must never sit unpushed across exchanges.
+7. **Update this file** whenever the change would matter to a fresh session — new
+   defaults, a new capability, a newly parked item, roadmap movement, a new lesson.
+   It is a living document, not a snapshot.
 
-Commits, progress entries and memory updates are part of finishing the work, not
-extras to be asked for.
+Commits, pushes, progress entries, HANDOFF updates and memory updates are part of
+finishing the work, not extras to be asked for. Keep output lean: no narration of
+routine steps, no restating what he already knows — but never trade honesty or a real
+bug for brevity.
 
 ---
 
