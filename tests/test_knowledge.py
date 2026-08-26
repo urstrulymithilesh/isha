@@ -98,6 +98,39 @@ def test_forget_drops_the_whole_corpus(tmp_path):
 # -- the gate ---------------------------------------------------------------
 
 
+def test_the_subject_name_is_the_trigger():
+    """A pure distance gate did not survive a second corpus — measured, the margin
+    INVERTED at six passages. His own words don't drift as the corpus grows."""
+    from isha.memory.corpus import subjects_mentioned
+    names = ["guitar", "sourdough"]
+    assert subjects_mentioned("how do I tune my guitar", names) == ["guitar"]
+    assert subjects_mentioned("I think I'll cook something tonight", names) == []
+    assert subjects_mentioned("how was your day", names) == []
+
+
+def test_subject_matching_is_word_boundary_not_substring():
+    """"guitarist" is not the guitar corpus, and "a sour taste" is not sourdough."""
+    from isha.memory.corpus import subjects_mentioned
+    names = ["guitar", "sour"]
+    assert subjects_mentioned("she's a brilliant guitarist", names) == []
+    assert subjects_mentioned("that left a sour taste", names) == ["sour"]
+
+
+def test_search_can_be_restricted_to_named_corpora(tmp_path):
+    guitar = tmp_path / "guitar.md"
+    guitar.write_text("tune the guitar string", encoding="utf-8")
+    other = tmp_path / "dinner.md"
+    other.write_text("guitar string dinner", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", guitar)
+    s.ingest("dinner", other)
+    assert {p.corpus for p in s.search("guitar", max_distance=9)} == {"guitar", "dinner"}
+    assert {p.corpus for p in s.search("guitar", max_distance=9, corpora=["guitar"])} \
+        == {"guitar"}
+    # No subject named means nothing searched at all — not "search everything".
+    assert s.search("guitar", max_distance=9, corpora=[]) == []
+
+
 def test_an_unrelated_question_retrieves_nothing(tmp_path):
     """The gate IS the trigger — there is no keyword parser in front of this, so a
     loose gate is the difference between a useful passage and a document barging into

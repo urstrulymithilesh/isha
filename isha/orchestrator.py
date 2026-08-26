@@ -42,6 +42,7 @@ from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
 from isha.memory.episodes import EpisodeStore, Summariser
+from isha.memory.corpus import subjects_mentioned
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.actions.parse import (MediaCommand, OpenCommand, UnknownTarget,
                                 parse_action_command)
@@ -411,14 +412,18 @@ class Orchestrator:
                     recall_mode = True
                     print(f"  [memory] temporal question ({window.label}) — "
                           f"{len(found)} episode(s) on record")
-            # Anything he has had her read. No parser and no keyword list: the distance
-            # gate IS the trigger, so a passage only appears when it is genuinely about
-            # what he just said. Skipped in recall mode — a question about last Tuesday
-            # wants the conversation record, not a document.
+            # Anything he has had her read. The trigger is NAMING the subject, not the
+            # distance — a pure distance gate inverted at six passages once a second
+            # corpus existed (see subjects_mentioned). Recent turns count too, so
+            # follow-ups work without repeating the word every time. Skipped in recall
+            # mode: a question about last Tuesday wants the record, not a document.
             if self.corpus is not None and not recall_mode:
+                recent = " ".join(m.content for m in self._history[-CONFIG.knowledge.topic_turns:])
+                named = subjects_mentioned(f"{recent} {text}", self.corpus.names())
                 passages = self.corpus.search(
                     text, k=CONFIG.knowledge.top_k,
-                    max_distance=CONFIG.knowledge.max_distance)
+                    max_distance=CONFIG.knowledge.max_distance,
+                    corpora=named) if named else []
                 block = knowledge_context(
                     passages, char_budget=CONFIG.knowledge.char_budget)
                 if block is not None:

@@ -192,6 +192,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "still fills the gap — but most of the time she will tell him it isn't in there",
         True,
     ),
+    ProgressEntry(
+        "v1.13 — she understands more of how he actually asks", "2026-08-26",
+        "asking her to put something on, or show him something, or get him something "
+        "works now, and so does telling her to play the next one. She also stopped "
+        "bringing up things she has read unless he actually raises the subject — she "
+        "was going to start doing that at the worst moments as she read more",
+        False,
+    ),
 ]
 
 

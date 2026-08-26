@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `da55c0f`. 293 tests, 48 commits, 78 files, ~9.5k lines of
+Last updated at commit `HEAD`. 313 tests, 49 commits, 78 files, ~9.7k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -142,13 +142,16 @@ boundaries, embeds it, and stores it in a named corpus in the same db. `--list` 
 what she has read, `--forget <name>` drops a corpus whole, `--ask "..."` shows what
 she would retrieve and how close it scored.
 
-There is **no parser and no keyword list** in front of this — the cosine distance gate
-IS the trigger, so a passage appears only when what he said is genuinely about it.
-Gate measured on bge-small against a real document: eight real questions about it
-landed 0.182-0.446, eight ordinary utterances 0.478-0.586, so the gate sits at **0.46**
-inside that gap. The margin is thin (0.032) and will close on a wider corpus — move it
-DOWN when it does. A missed retrieval is harmless; a false one puts a paragraph about
-guitar strings into a conversation about his day.
+**The trigger is naming the subject**, not the distance. The first design used the
+distance alone and it did not survive a second document — see §6. Retrieval fires when
+a corpus NAME appears in what he just said or in the last `topic_turns` (4) turns, and
+the distance gate (0.46) then filters *within* that subject.
+
+Measured on two corpora: cold, with the subject never mentioned, recall is **3/12** —
+he has to name it once. Once named, follow-ups are **12/12**, and false fires are
+**0/12** even while a subject is live. That trade is the point: a missed retrieval is a
+question she answers without the document; a false one drops a paragraph about guitar
+strings into a conversation about his day.
 
 ### Honesty guards
 - **Real clock injected every turn** (`context.now_context()`). She used to answer
@@ -170,7 +173,9 @@ real wake detector and VAD (openWakeWord is itself trained on Piper-generated sp
 so this genuinely triggers it). Uses temporary databases; never touches real memory.
 
 Scenarios: conversation, memory store+recall, timer fires, barge-in,
-wake-after-a-long-reply.
+wake-after-a-long-reply, **action** (an app she does not have — the only action branch
+safe to run headless, since a passing "open Spotify" would open Spotify on every run),
+**knowledge** (ingest, subject trigger, retrieve, answer from the document). ~122s.
 
 ---
 
@@ -189,8 +194,8 @@ wake-after-a-long-reply.
 | Embeddings | `BAAI/bge-small-en-v1.5` (fastembed, CPU) |
 | Schedule | tick 2s · stale 120min · late-note 60s |
 | Actions | registry of 23 openable targets · search depth 4 · top-5 results |
-| Knowledge | top-2 passages · 800-char chunks · 1200-char budget · distance gate 0.46 |
-| Progress log | 22 entries, latest **v1.12** |
+| Knowledge | subject-name trigger · 4 topic turns · top-2 · 800-char chunks · gate 0.46 |
+| Progress log | 23 entries, latest **v1.13** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -347,6 +352,30 @@ Register loses to accuracy here, same as it did for memory questions.
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
 
+### An embedding threshold is not a trigger
+The knowledge retrieval shipped with the distance gate AS the trigger — no parser, no
+keyword list. It measured beautifully on one document and broke on the second.
+
+| | closest real question | closest small talk | margin |
+|---|---|---|---|
+| 1 corpus, 3 passages | 0.446 | 0.478 | **+0.032** |
+| 2 corpora, 6 passages | 0.446 | 0.432 | **-0.013** |
+| 2 corpora, 44 passages | 0.390 | 0.347 | **-0.043** |
+
+More passages means a better nearest match for *everything*, small talk included, so no
+fixed threshold survives growth. A contrast test (top vs corpus mean, which should be
+scale-free) did not separate them either: worst real gap 0.059, best small-talk gap
+0.125. Checked and ruled out that this was an artifact of the second corpus being
+`HANDOFF.md` — a neutral sourdough document inverted the margin at **six** passages.
+
+Fixed by triggering on **his words** (a corpus name, in this turn or recent ones),
+which do not drift as the corpus grows, with the distance gate demoted to a filter
+inside the named subject.
+
+**Pattern:** a similarity threshold tuned on today's data is a measurement of today's
+data. If it decides *whether* something happens, it will drift; let it decide *which*
+one, and let something deterministic decide whether.
+
 ### Config that only applies on first run silently rots
 `seed_if_needed` gated on "does this db have any core facts yet", so editing `seed.py`
 did nothing to an existing database. The live one was three commits stale: she was
@@ -456,7 +485,7 @@ isha/
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 293 tests
+tests/                 313 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -464,8 +493,8 @@ diagnose.py            audio device tools
 ### Commands
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
-.venv\Scripts\python.exe -m isha smoke          # live end-to-end, ~75s
-.venv\Scripts\python.exe -m pytest -q           # 293 tests, ~2s
+.venv\Scripts\python.exe -m isha smoke          # live end-to-end, 7 scenarios, ~2min
+.venv\Scripts\python.exe -m pytest -q           # 313 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
@@ -518,10 +547,20 @@ She wakes, listens, remembers, keeps time, admits what she does not know, and ca
 talked to or typed at.
 
 The next real step is **proactive daily learning (§5, step 9)** or **remote access
-(step 10)**. Cheaper things worth doing first: widen the action registry as he finds
-phrasings that miss; watch the knowledge distance gate as more documents go in and drop
-it if a corpus starts appearing in small talk; and give the destructive actions (delete,
-move, run) the ask-first treatment if they are wanted at all.
+(step 10)**. Cheaper things worth doing first: give the destructive actions (delete,
+move, run) the ask-first treatment if they are wanted at all, and add a way to teach
+her a new app without editing `config.py`.
+
+**Known rough edges, none blocking:**
+- **One-word media commands are STT-flaky.** Piper-spoken "resume" came back as
+  "Re-soon." and "skip" as "Skit."; two-word forms ("skip this", "pause the music") are
+  reliable. Not a parser bug and not fixable there — fuzzy-matching short words would
+  fire on real ones.
+- **Cold-start knowledge recall is 3/12** by design (see §2) — he must name the subject
+  once per topic.
+- **Adding an app means editing `config.py`.** Fine for now, annoying eventually.
+- **Wake word is still `hey_jarvis` for BOTH wake and stop.** Parked by choice (§4).
+- `.pdf` is not an ingestable format — `.txt`, `.md`, `.markdown`, `.rst` only.
 
 Step 8's **step-by-step guidance mode** ("walk me through it") was deliberately not
 built — retrieval answers questions today, and guidance needs multi-turn position

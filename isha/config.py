@@ -126,6 +126,8 @@ class KnowledgeConfig:
     """What she has read. `python -m isha learn <name> <path>` fills it."""
     enabled: bool = True
     top_k: int = 2                       # passages considered per turn
+    topic_turns: int = 4                 # recent turns also scanned for a subject name,
+                                         # so a follow-up need not repeat the word
     chunk_chars: int = 800               # ~200 tokens; two of them still fit num_ctx
     char_budget: int = 1200              # hard cap on what gets injected in one turn
     # Cosine DISTANCE gate. Above this, the closest passage is not actually about what
@@ -172,6 +174,10 @@ def _default_apps() -> dict[str, str]:
         "github": "https://github.com",
         "gmail": "https://mail.google.com",
         "maps": "https://maps.google.com",
+        "google maps": "https://maps.google.com",
+        "google": "https://www.google.com",
+        "drive": "https://drive.google.com",
+        "whatsapp": "https://web.whatsapp.com",
     }
 
 

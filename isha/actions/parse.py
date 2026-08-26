@@ -64,12 +64,28 @@ _TRAILING_POLITE = re.compile(r"[,\s]+please\b[.!?]*$", re.I)
 _OPEN_VERBS = r"open(?:\s+up)?|launch|start(?:\s+up)?|fire\s+up|pull\s+up|bring\s+up"
 _OPEN = re.compile(rf"^(?:{_OPEN_VERBS})\s+(?P<name>.+)$", re.I)
 
+# Weaker verbs, added after a live probe where "put on Spotify", "show me my downloads"
+# and "get me YouTube" all fell through. They only ever mean "open this" when what
+# follows is something she can actually open, so unlike the verbs above they may NOT
+# produce an UnknownTarget — "get me a coffee" has to stay ordinary talk.
+_SOFT_OPEN_VERBS = r"show\s+me|put\s+on|get\s+me|give\s+me|find\s+me"
+_SOFT_OPEN = re.compile(rf"^(?:{_SOFT_OPEN_VERBS})\s+(?P<name>.+)$", re.I)
+
 # "find my notes on the car" -> notes car. `find out` is a question, not a file search.
 _FIND = re.compile(r"^(?:find|search\s+for|look\s+for|dig\s+up|where\s+(?:is|are)|where's)\s+"
                    r"(?P<needle>.+)$", re.I)
 _FIND_NOISE = ("my", "the", "a", "an", "some", "any", "file", "files", "document",
                "documents", "folder", "on", "about", "for", "of", "called", "named",
-               "titled", "with", "regarding", "somewhere")
+               "titled", "with", "regarding", "somewhere", "me", "us", "please")
+# Words that are never a filename. "can you find some time for me" reduced to "time"
+# and became a file search in a live probe — harmless in effect, but it is the wrong
+# branch, and the wrong branch is how a feature stops being trusted. A needle made of
+# nothing but these is not a search.
+_NOT_A_FILENAME = frozenset({
+    "time", "someone", "somebody", "something", "anything", "everything", "nothing",
+    "way", "ways", "reason", "excuse", "room", "space", "peace", "help", "work",
+    "energy", "courage", "one", "it", "them", "him", "her", "you", "yourself",
+})
 
 # Media control matches only when the whole utterance IS the command. A substring rule
 # would fire on "we should play chess later"; there is no ambiguity to resolve and no
@@ -78,6 +94,9 @@ _MEDIA: tuple[tuple[str, str], ...] = (
     (r"(?:play|resume|unpause)(?:\s+(?:it|the\s+)?(?:music|song|track|audio|video))?", "play_pause"),
     (r"(?:pause|hold)(?:\s+(?:it|the\s+)?(?:music|song|track|audio|video))?", "play_pause"),
     (r"stop\s+(?:it|the\s+)?(?:music|song|track|audio|video|playback)", "play_pause"),
+    # "play the next one" reads as play, means skip. Checked before the bare next/skip
+    # rule would matter because the play_pause patterns above cannot match it.
+    (r"(?:play|skip\s+to)\s+the\s+next(?:\s+(?:song|track|one))?", "next"),
     (r"(?:next|skip)(?:\s+(?:this|the))?(?:\s+(?:song|track|one))?", "next"),
     (r"(?:previous|last|go\s+back(?:\s+a)?)(?:\s+(?:song|track|one))?", "previous"),
     (r"(?:turn\s+(?:it|the\s+volume)\s+up|volume\s+up|louder|turn\s+up(?:\s+the\s+volume)?)",
@@ -101,8 +120,16 @@ def _normalise(name: str) -> str:
     a full stop, and he might say "the Spotify app"."""
     s = name.lower().strip().strip(".!?,")
     s = re.sub(r"^(?:my|the)\s+", "", s)
-    s = re.sub(r"\s+(?:app|application|program|window|please)$", "", s)
-    return s.strip()
+    # Trailing filler, each one from a live probe miss: "open my documents folder" and
+    # "start Spotify for me" both became unknown targets purely because of the tail.
+    # Looped, because they stack — "the Spotify app now" has two.
+    while True:
+        trimmed = re.sub(r"\s+(?:for\s+(?:me|us))$", "", s)
+        trimmed = re.sub(r"\s+(?:app|application|program|window|folder|please|now)$",
+                         "", trimmed)
+        if trimmed == s:
+            return s.strip()
+        s = trimmed
 
 
 def _find_needle(raw: str) -> str:
@@ -140,12 +167,24 @@ def parse_action_command(text: str, apps: dict[str, str]) -> ActionCommand | Non
             return UnknownTarget(name=name)
         return None
 
+    m = _SOFT_OPEN.match(stripped)
+    if m:
+        target = apps.get(_normalise(m.group("name")))
+        if target is not None:
+            return OpenCommand(name=_normalise(m.group("name")), target=target)
+        # Deliberately falls through rather than returning: "find me the invoice" is a
+        # soft-open miss and a perfectly good file search.
+
     m = _FIND.match(stripped)
     if m:
         raw = m.group("needle")
         if re.match(r"^out\b", raw, re.I):     # "find out whether..." is a question
             return None
         needle = _find_needle(raw)
-        return FindCommand(needle) if needle else None
+        if not needle:
+            return None
+        if all(w in _NOT_A_FILENAME for w in needle.split()):
+            return None
+        return FindCommand(needle)
 
     return None

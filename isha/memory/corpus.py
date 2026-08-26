@@ -33,6 +33,27 @@ class Passage:
     distance: float      # cosine distance; lower is closer
 
 
+def subjects_mentioned(text: str, names) -> list[str]:
+    """Which corpus names he actually said. Word-boundary match, case-insensitive.
+
+    This is the TRIGGER for retrieval, and it replaced a pure distance threshold that
+    did not survive contact with a second document. Measured: with one corpus, real
+    questions scored 0.182-0.446 and ordinary talk 0.478-0.586 — a clean 0.032 gap. Add
+    a second, unrelated corpus and the gap INVERTS at six passages ("I think I'll cook
+    something tonight" hit the sourdough corpus at 0.432, closer than a genuine guitar
+    question at 0.446). More passages means a better nearest match for everything,
+    small talk included, so no fixed threshold survives growth, and a contrast/ratio
+    test did not separate them either.
+
+    So the trigger is his own words, which do not drift as the corpus grows. The cost is
+    stated plainly: he has to name the subject to raise it, after which follow-ups work
+    because recent turns are searched too.
+    """
+    low = text.lower()
+    return [n for n in names
+            if re.search(rf"\b{re.escape(n.lower())}\b", low)]
+
+
 def chunk_text(text: str, *, chunk_chars: int = 800) -> list[str]:
     """Split on blank lines, then pack paragraphs up to the budget.
 
@@ -134,22 +155,35 @@ class CorpusStore:
             "SELECT corpus, COUNT(*), COUNT(DISTINCT source) FROM corpus_chunks "
             "GROUP BY corpus ORDER BY corpus")]
 
-    def search(self, query: str, *, k: int = 2, max_distance: float = 1.0) -> list[Passage]:
+    def names(self) -> list[str]:
+        return [r[0] for r in self._conn.execute(
+            "SELECT DISTINCT corpus FROM corpus_chunks ORDER BY corpus")]
+
+    def search(self, query: str, *, k: int = 2, max_distance: float = 1.0,
+               corpora=None) -> list[Passage]:
         """Closest passages, nearest first, dropping anything past `max_distance`.
 
-        The distance gate is what keeps this out of ordinary conversation: a chat about
-        his day should not drag in a paragraph about a corpus topic just because it was
-        the least-bad match. Nothing close enough means nothing injected.
+        `corpora` restricts the search to named subjects — see `subjects_mentioned`,
+        which is the actual trigger. The distance gate survives as a SECOND filter
+        inside a subject he raised himself: it drops a passage that is about the right
+        subject but nowhere near his question. It is no longer load-bearing on its own,
+        which is exactly what the measurements said it could not be.
         """
         if not query.strip():
             return []
+        where, params = "", []
+        if corpora is not None:
+            if not corpora:
+                return []
+            where = f"WHERE c.corpus IN ({','.join('?' * len(corpora))})"
+            params = list(corpora)
         if not self._conn.execute("SELECT 1 FROM corpus_chunks LIMIT 1").fetchone():
             return []
         blob = sqlite_vec.serialize_float32(self._embedder.embed([query])[0])
         rows = self._conn.execute(
             "SELECT c.corpus, c.source, c.text, vec_distance_cosine(v.embedding, ?) AS d "
-            "FROM corpus_vectors v JOIN corpus_chunks c ON c.id = v.chunk_id "
-            "ORDER BY d LIMIT ?", (blob, k)).fetchall()
+            f"FROM corpus_vectors v JOIN corpus_chunks c ON c.id = v.chunk_id {where} "
+            "ORDER BY d LIMIT ?", (blob, *params, k)).fetchall()
         return [Passage(corpus=r[0], source=r[1], text=r[2], distance=r[3])
                 for r in rows if r[3] <= max_distance]
 

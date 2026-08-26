@@ -254,13 +254,25 @@ def _learn_cmd(argv: list[str]) -> int:
             print('Ask what? e.g. python -m isha learn --ask "how do I tune it"')
             store.close()
             return 2
-        # No distance gate here on purpose: this is the tool for CHOOSING the gate, so
-        # it has to show the near misses too.
-        for p in store.search(rest[0], k=CONFIG.knowledge.top_k):
-            marker = "USED " if p.distance <= CONFIG.knowledge.max_distance else "below"
-            print(f"  [{marker} d={p.distance:.3f}] ({p.corpus}/{p.source}) "
-                  f"{p.text[:160]}...")
-        print(f"\nGate is {CONFIG.knowledge.max_distance} (config.knowledge.max_distance).")
+        from isha.memory.corpus import subjects_mentioned
+        question = rest[0]
+        named = subjects_mentioned(question, store.names())
+        if not named:
+            print(f"No subject named in {question!r} — she would retrieve NOTHING.")
+            print(f"She knows these subjects: {', '.join(store.names()) or '(none)'}.")
+            print("Naming one, in this sentence or a recent turn, is what triggers "
+                  "retrieval.\n")
+        else:
+            print(f"Subject named: {', '.join(named)}. Searching only there.\n")
+        # No distance gate on the printout: this is the tool for CHOOSING the gate, so
+        # it has to show the near misses too. `USED` reflects BOTH gates, so what it
+        # prints is what she would actually get.
+        for p in store.search(question, k=CONFIG.knowledge.top_k):
+            used = p.distance <= CONFIG.knowledge.max_distance and p.corpus in named
+            print(f"  [{'USED ' if used else 'below'} d={p.distance:.3f}] "
+                  f"({p.corpus}/{p.source}) {p.text[:160]}...")
+        print(f"\nGate is {CONFIG.knowledge.max_distance} (config.knowledge.max_distance), "
+              "and it only applies inside a subject he named.")
         store.close()
         return 0
 

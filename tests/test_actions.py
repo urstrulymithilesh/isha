@@ -32,6 +32,39 @@ def test_open_phrasings(said):
     assert isinstance(cmd, OpenCommand) and cmd.target == "spotify:"
 
 
+@pytest.mark.parametrize("said", [
+    "put on Spotify",
+    "get me Spotify",
+    "show me Spotify",
+    "give me Spotify",
+])
+def test_soft_open_verbs(said):
+    """All three fell through in a live probe. They are real ways of asking."""
+    cmd = parse(said)
+    assert isinstance(cmd, OpenCommand) and cmd.target == "spotify:"
+
+
+@pytest.mark.parametrize("said", [
+    "get me a coffee",
+    "show me the money",
+    "put on a jumper",
+])
+def test_soft_open_verbs_never_claim_an_unknown_target(said):
+    """Unlike "open X", these only mean "start this" when X is something she has. She
+    must not answer "I can't open a coffee"."""
+    assert parse(said) is None
+
+
+@pytest.mark.parametrize("said,name", [
+    ("start Spotify for me", "spotify"),
+    ("open my downloads folder", "downloads"),
+    ("open the Spotify app now", "spotify"),
+])
+def test_trailing_filler_does_not_break_the_lookup(said, name):
+    cmd = parse(said)
+    assert isinstance(cmd, OpenCommand) and cmd.name == name
+
+
 def test_unknown_app_is_a_command_not_a_shrug():
     """Falling through to chat would have her agree she opened something she can't."""
     cmd = parse("open Photoshop")
@@ -84,6 +117,36 @@ def test_find_strips_filler_to_the_words_that_matter():
 
 def test_find_out_is_a_question_not_a_search():
     assert parse("find out what time the shop closes") is None
+
+
+@pytest.mark.parametrize("said", [
+    "can you find some time for me",
+    "find me some peace",
+    "look for a reason",
+])
+def test_abstract_nouns_are_not_a_file_search(said):
+    """"find some time for me" reduced to "time" and became a file search in a live
+    probe. Harmless in effect — she finds nothing — but it is the wrong branch, and
+    wrong branches are how a feature stops being trusted."""
+    assert parse(said) is None
+
+
+def test_find_me_still_works_for_a_real_file():
+    """"find me X" is a soft-open verb AND a search. The soft-open miss must fall
+    through to the search rather than swallowing it."""
+    cmd = parse("find me the tax invoice")
+    assert isinstance(cmd, FindCommand) and cmd.needle == "tax invoice"
+
+
+@pytest.mark.parametrize("said,action", [
+    ("play the next one", "next"),
+    ("play the next song", "next"),
+    ("skip to the next track", "next"),
+])
+def test_play_the_next_one_means_skip(said, action):
+    """Reads as play, means skip."""
+    cmd = parse(said)
+    assert isinstance(cmd, MediaCommand) and cmd.action == action
 
 
 # -- bowing out -------------------------------------------------------------

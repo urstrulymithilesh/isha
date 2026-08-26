@@ -15,7 +15,7 @@ clean interface — not a rewrite.
 
 ```
   AudioTransport → WakeWord → Transcriber → LLM → Synthesizer → AudioTransport
-   (WASAPI mic)    (openWW)   (whisper CPU) (Qwen  (Piper CPU)    (headset out)
+   (WASAPI mic)    (openWW)   (whisper CPU) (llama3  (Piper CPU)    (headset out)
                                             GPU)
                          │                    │
                     Orchestrator (asyncio) ── MemoryStore (SQLite + sqlite-vec)
@@ -23,10 +23,10 @@ clean interface — not a rewrite.
                     Scheduler (SQLite-persisted timers & reminders)
 ```
 
-**Compute split:** GPU does reasoning only (Qwen resident). CPU hears (faster-whisper
+**Compute split:** GPU does reasoning only (the model stays resident). CPU hears (faster-whisper
 int8), speaks (Piper), and embeds. Nothing contends for the 4GB.
 
-**Stack (all free / local):** Ollama + Qwen2.5-3B · faster-whisper · Piper ·
+**Stack (all free / local):** Ollama + llama3.2 · faster-whisper · Piper ·
 openWakeWord + Silero VAD · SQLite + sqlite-vec · custom asyncio orchestrator.
 
 ## Status
@@ -55,10 +55,10 @@ Working end to end, offline:
   arbitrary scripts are deliberately excluded.
 
 - **Things she has read** — `python -m isha learn guitar ./notes/guitar.md`. Documents
-  are chunked, embedded and retrieved when what he says is close enough to them, so a
-  corpus never barges into small talk. She answers from the passages or says they don't
-  cover it — right about five times in six, which is the honest number, not a solved
-  problem.
+  are chunked, embedded, and retrieved when he *names the subject* (in that sentence or
+  a recent turn), so a corpus never barges into small talk. She answers from the
+  passages or says they don't cover it — right about five times in six, which is the
+  honest number, not a solved problem.
 
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
@@ -72,7 +72,7 @@ You also need [Ollama](https://ollama.com) installed and running.
 py -3.13 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-ollama pull qwen2.5:3b
+ollama pull llama3.2
 # Her voice (~60MB, offline after this):
 python -m piper.download_voices en_US-amy-medium --download-dir models
 # Her ears — the wake-word models (~10MB, offline after this):
@@ -112,8 +112,8 @@ Green = go. A red probe (e.g. sqlite-vec won't load) blocks app code.
 Two layers, deliberately:
 
 ```bash
-.venv\Scripts\python.exe -m pytest        # 173 unit tests with fakes, ~1 second
-.venv\Scripts\python.exe -m isha smoke    # 5 scenarios on the REAL stack, ~1 minute
+.venv\Scripts\python.exe -m pytest        # 313 unit tests with fakes, ~2 seconds
+.venv\Scripts\python.exe -m isha smoke    # 7 scenarios on the REAL stack, ~2 minutes
 ```
 
 (If you have run `.venv\Scriptsctivate`, plain `pytest` and `python -m isha smoke`
@@ -130,20 +130,14 @@ fact extraction. None were reachable with fakes.
 `isha smoke` runs the real Ollama, Piper, faster-whisper and SQLite end to end, using
 Piper as a mouth feeding the pipeline's ears — so it needs no microphone, no speakers
 and no human. It covers a conversation turn, memory stored and recalled across a new
-connection, a spoken timer firing, barge-in, and the wake word still working after a
-long reply. Each scenario uses a temporary database; your real memory is untouched.
+connection, a spoken timer firing, barge-in, the wake word still working after a long
+reply, an app she does not have being admitted rather than agreed to, and a document
+being ingested and answered from. Each scenario uses a temporary database; your real
+memory is untouched.
 
 Run the unit tests constantly; run the smoke test after anything that touches audio,
 threading, or the model boundary.
 
-
-
-The deterministic core (preemption logic, and soon memory + scheduler) is
-100% unit-tested with no hardware or models:
-
-```bash
-pytest
-```
 
 ## Privacy
 

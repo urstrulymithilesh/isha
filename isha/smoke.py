@@ -50,6 +50,8 @@ from isha.config import CONFIG
 from isha.core.interfaces import Message
 from isha.core.state import ConversationState
 from isha.llm.ollama import OllamaLLM
+from isha.actions.parse import UnknownTarget, parse_action_command
+from isha.memory.corpus import CorpusStore, subjects_mentioned
 from isha.memory.embedder import FastEmbedEmbedder
 from isha.memory.extraction import FactExtractor
 from isha.memory.store import SqliteMemoryStore
@@ -172,7 +174,7 @@ class Result:
     checks: list[str] = field(default_factory=list)
 
 
-def _build(transport, db: Path, *, with_memory=True, with_scheduler=False):
+def _build(transport, db: Path, *, with_memory=True, with_scheduler=False, corpus=None):
     llm = OllamaLLM()
     store = extractor = scheduler = None
     if with_memory:
@@ -192,6 +194,7 @@ def _build(transport, db: Path, *, with_memory=True, with_scheduler=False):
         preroll_frames=8,
         store=store,
         extractor=extractor,
+        corpus=corpus,
     )
     if with_scheduler:
         scheduler = Scheduler(SqliteScheduleStore(db), orch.notify, tick_seconds=0.5)
@@ -397,12 +400,120 @@ async def scenario_wake_after_reply(mouth: Mouth, db: Path) -> Result:
     return Result("wake-after-reply", True, "detector survives a long reply", checks=checks)
 
 
+async def scenario_action(mouth: Mouth, db: Path) -> Result:
+    """A spoken request to open something she does NOT have.
+
+    Deliberately the unknown-target branch: it exercises speech -> whisper -> parser ->
+    orchestrator note -> reply end to end, and it is the only action branch that is safe
+    to run headless. A passing "open Spotify" scenario would open Spotify every time
+    anyone ran the smoke test.
+    """
+    checks = []
+    frames = mouth.frames("hey jarvis") + mouth.frames("open Photoshop")
+    transport = ScriptedTransport(frames)
+    orch, store, _ = _build(transport, db)
+    await orch.run()
+
+    user_turns = [m for m in orch._history if m.role == "user"]
+    if not user_turns:
+        return Result("action", False, "whisper produced no transcript", checks=checks)
+    checks.append(f"whisper transcribed: {user_turns[0].content[:48]!r}")
+
+    heard = user_turns[0].content
+    # Already wake-stripped by the orchestrator, which is the path that matters.
+    cmd = parse_action_command(heard, CONFIG.actions.apps)
+    if not isinstance(cmd, UnknownTarget):
+        return Result("action", False,
+                      f"the real transcript parsed as {type(cmd).__name__}, not an "
+                      f"unknown target", checks=checks)
+    checks.append(f"parsed from real speech as unknown target {cmd.name!r}")
+
+    replies = [m for m in orch._history if m.role == "assistant"]
+    if not replies:
+        return Result("action", False, "she said nothing", checks=checks)
+    reply = replies[0].content.lower()
+    checks.append(f"she said: {replies[0].content[:64]!r}")
+    # She must not agree that she opened it. This is the whole point of the branch.
+    if any(w in reply for w in ("opened it", "i've opened", "i have opened",
+                                "opening photoshop", "it's open", "is now open")):
+        return Result("action", False,
+                      "she claimed to have opened something she cannot open",
+                      checks=checks)
+    checks.append("she did not claim to have opened it")
+    if store:
+        store.close()
+    return Result("action", True, "unknown app admitted, not agreed to", checks=checks)
+
+
+async def scenario_knowledge(mouth: Mouth, db: Path) -> Result:
+    """Ingest a document, then ask about it by name and get an answer from it.
+
+    Covers the whole step-8 path on the real stack: real embeddings, the subject-name
+    trigger, the distance gate, and the injected block reaching the model.
+    """
+    checks = []
+    doc = db.parent / "smoke_corpus.md"
+    doc.write_text(
+        "# Ferrets\n\n"
+        "A ferret sleeps between fourteen and eighteen hours a day, usually in short "
+        "bursts rather than one long stretch.\n\n"
+        "Ferrets should never be fed dog food. They need a high-protein, high-fat diet "
+        "and cannot digest plant matter well.\n",
+        encoding="utf-8")
+    corpus = CorpusStore(db, FastEmbedEmbedder())
+    stored = corpus.ingest("ferrets", doc)
+    if stored < 1:
+        return Result("knowledge", False, f"ingest stored {stored} passages", checks=checks)
+    checks.append(f"ingested {stored} passages with the real embedder")
+
+    frames = mouth.frames("hey jarvis") + mouth.frames("how long do ferrets sleep")
+    transport = ScriptedTransport(frames)
+    orch, store, _ = _build(transport, db, corpus=corpus)
+    await orch.run()
+
+    user_turns = [m for m in orch._history if m.role == "user"]
+    if not user_turns:
+        return Result("knowledge", False, "whisper produced no transcript", checks=checks)
+    heard = user_turns[0].content
+    checks.append(f"whisper transcribed: {heard[:48]!r}")
+
+    named = subjects_mentioned(heard, corpus.names())
+    if not named:
+        return Result("knowledge", False,
+                      f"the subject name survived neither speech nor whisper: {heard!r}",
+                      checks=checks)
+    checks.append(f"subject trigger fired on {named}")
+
+    hits = corpus.search(heard, k=CONFIG.knowledge.top_k,
+                         max_distance=CONFIG.knowledge.max_distance, corpora=named)
+    if not hits:
+        return Result("knowledge", False, "nothing passed the distance gate", checks=checks)
+    checks.append(f"retrieved {len(hits)} passage(s), closest {hits[0].distance:.3f}")
+
+    replies = [m for m in orch._history if m.role == "assistant"]
+    if not replies:
+        return Result("knowledge", False, "she said nothing", checks=checks)
+    reply = replies[0].content.lower()
+    checks.append(f"she said: {replies[0].content[:64]!r}")
+    # The number is in the document and nowhere in the question.
+    if not any(w in reply for w in ("fourteen", "eighteen", "14", "18")):
+        return Result("knowledge", False,
+                      "she answered without using what she had read", checks=checks)
+    checks.append("the answer came from the document")
+    corpus.close()
+    if store:
+        store.close()
+    return Result("knowledge", True, "ingested, retrieved and answered from", checks=checks)
+
+
 SCENARIOS = [
     ("conversation", scenario_conversation),
     ("memory", scenario_memory),
     ("timer", scenario_timer),
     ("barge-in", scenario_barge_in),
     ("wake-after-reply", scenario_wake_after_reply),
+    ("action", scenario_action),
+    ("knowledge", scenario_knowledge),
 ]
 
 
