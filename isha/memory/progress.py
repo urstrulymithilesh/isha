@@ -209,6 +209,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "she could open it when she could not",
         False,
     ),
+    ProgressEntry(
+        "v1.15 — she reads things on her own now", "2026-08-26",
+        "if he switches it on, she checks a few sources of his choosing through the "
+        "day and keeps what comes in, so when he asks whether there's anything new "
+        "she actually has an answer. She never brings it up out of nowhere — a "
+        "headline is not worth interrupting anyone for — and when nothing has come "
+        "in she says that, rather than finding something to fill the gap",
+        True,
+    ),
 ]
 
 

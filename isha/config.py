@@ -122,6 +122,33 @@ class ScheduleConfig:
 
 
 @dataclass(frozen=True)
+class DigestConfig:
+    """Sources she reads on a schedule. See isha/digest/feeds.py for the safety notes.
+
+    **OFF by default, and that is a deliberate stance, not caution.** Every other part
+    of Isha runs with the network unplugged, and the README says so. Turning this on
+    means she makes outbound requests while running — nothing of his is sent, but the
+    claim changes from "never touches the network" to "fetches these feeds and nothing
+    else". That is his call to make, not a default to inherit.
+    """
+    enabled: bool = False
+    # name -> feed url. RSS or Atom only; see feeds.py for why not web pages.
+    sources: tuple[tuple[str, str], ...] = (
+        ("hacker news", "https://news.ycombinator.com/rss"),
+        ("bbc", "https://feeds.bbci.co.uk/news/rss.xml"),
+    )
+    interval_hours: float = 6.0          # wall-clock, reconciled on start like reminders
+    items_per_source: int = 5            # newest N kept per fetch
+    max_items_told: int = 3              # most she reads out in one answer
+    fetch_timeout: int = 20              # measured: hnrss.org needs >15s, ycombinator ~2s
+    max_bytes: int = 2_000_000           # hard cap while reading a response
+    # When on, she may MENTION (once, in a line) that something new arrived — but only
+    # riding on a reply she was already giving. She never breaks a silence for it; see
+    # the reasoning in HANDOFF. Off by default: unprompted is how a feature gets muted.
+    nudge: bool = False
+
+
+@dataclass(frozen=True)
 class KnowledgeConfig:
     """What she has read. `python -m isha learn <name> <path>` fills it."""
     enabled: bool = True
@@ -204,6 +231,7 @@ class Config:
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    digest: DigestConfig = field(default_factory=DigestConfig)
 
 
 CONFIG = Config()

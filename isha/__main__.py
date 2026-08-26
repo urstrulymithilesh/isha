@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from isha import __version__
@@ -305,6 +306,65 @@ def _learn_cmd(argv: list[str]) -> int:
     return 0
 
 
+def _digest_cmd(argv: list[str]) -> int:
+    """What she has read from her sources, and a manual fetch.
+
+        python -m isha digest                  # what's stored, and what's unheard
+        python -m isha digest --fetch          # read the sources right now
+        python -m isha digest --forget bbc     # drop everything from one source
+    """
+    from isha.digest.feeds import FeedError, fetch_feed
+    from isha.digest.store import DigestStore
+
+    CONFIG.memory.db_path.parent.mkdir(parents=True, exist_ok=True)
+    store = DigestStore(CONFIG.memory.db_path)
+
+    if "--forget" in argv:
+        rest = argv[argv.index("--forget") + 1:]
+        if not rest:
+            print("Which source? e.g. python -m isha digest --forget bbc")
+            store.close()
+            return 2
+        print(f"Dropped {store.forget_source(rest[0])} item(s) from {rest[0]!r}.")
+        store.close()
+        return 0
+
+    if "--fetch" in argv:
+        if not CONFIG.digest.enabled:
+            print("Reading sources is OFF (config.digest.enabled = False).")
+            print("Fetching once anyway, since you asked for it explicitly.\n")
+        for name, url in CONFIG.digest.sources:
+            try:
+                items = fetch_feed(url, name, timeout=CONFIG.digest.fetch_timeout,
+                                   max_bytes=CONFIG.digest.max_bytes,
+                                   limit=CONFIG.digest.items_per_source)
+            except FeedError as e:
+                print(f"  {name:14} FAILED — {e}")
+                continue
+            print(f"  {name:14} {len(items)} item(s), {store.add(items)} new")
+        store.set_last_fetch(datetime.now())
+        print()
+
+    sources = store.sources()
+    if not sources:
+        print(f"She hasn't read anything yet. Sources configured: "
+              f"{', '.join(n for n, _ in CONFIG.digest.sources) or '(none)'}.")
+        print("Read them now with:  python -m isha digest --fetch")
+        store.close()
+        return 0
+    print("She has read:")
+    for name, total, untold in sources:
+        print(f"  {name:14} {total:4} item(s), {untold} not yet mentioned to you")
+    latest = store.last_fetch()
+    print(f"\nLast checked: {latest:%A %d %B, %H:%M}" if latest else "\nNever checked.")
+    for item in store.recent(limit=5):
+        mark = " " if item.told else "*"
+        print(f"  {mark} ({item.source}) {item.title[:70]}")
+    print('\n"*" = not yet mentioned. Ask her "anything new?" and she\'ll tell you.')
+    store.close()
+    return 0
+
+
 def _run(argv: list[str]) -> int:
     from isha.audio.calibrate import calibrate
     from isha.audio.devices import DeviceError
@@ -400,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
         return _seed_cmd(argv[1:])
     if argv and argv[0] == "learn":
         return _learn_cmd(argv[1:])
+    if argv and argv[0] == "digest":
+        return _digest_cmd(argv[1:])
     if argv and argv[0] == "smoke":
         try:
             import isha.smoke

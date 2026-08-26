@@ -61,6 +61,12 @@ Working end to end, offline:
   gets the answer. She answers from the passages or says they don't cover it — right
   about five times in six, which is the honest number, not a solved problem.
 
+- **Reading her own sources** (off by default) — `python -m isha digest --fetch`, or
+  on a 6-hourly schedule once `CONFIG.digest.enabled` is on. RSS/Atom feeds only, no
+  web scraping. She never brings it up unprompted; ask "anything new?" and she tells
+  you what actually came in, or says nothing has. This is the only part of Isha that
+  touches the network, which is why it ships switched off.
+
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
 
@@ -113,8 +119,8 @@ Green = go. A red probe (e.g. sqlite-vec won't load) blocks app code.
 Two layers, deliberately:
 
 ```bash
-.venv\Scripts\python.exe -m pytest        # 313 unit tests with fakes, ~2 seconds
-.venv\Scripts\python.exe -m isha smoke    # 7 scenarios on the REAL stack, ~2 minutes
+.venv\Scripts\python.exe -m pytest        # 365 unit tests with fakes, ~2 seconds
+.venv\Scripts\python.exe -m isha smoke    # 8 scenarios on the REAL stack, ~3 minutes
 ```
 
 (If you have run `.venv\Scriptsctivate`, plain `pytest` and `python -m isha smoke`
@@ -132,9 +138,9 @@ fact extraction. None were reachable with fakes.
 Piper as a mouth feeding the pipeline's ears — so it needs no microphone, no speakers
 and no human. It covers a conversation turn, memory stored and recalled across a new
 connection, a spoken timer firing, barge-in, the wake word still working after a long
-reply, an app she does not have being admitted rather than agreed to, and a document
-being ingested and answered from. Each scenario uses a temporary database; your real
-memory is untouched.
+reply, an app she does not have being admitted rather than agreed to, a document being
+ingested and answered from, and a feed being read and reported honestly. Each scenario
+uses a temporary database; your real memory is untouched.
 
 Run the unit tests constantly; run the smoke test after anything that touches audio,
 threading, or the model boundary.
@@ -144,6 +150,11 @@ threading, or the model boundary.
 
 Everything runs on-device and offline. Runtime data (`data/`, `*.db`, `*.wav`,
 `models/`) is gitignored and never leaves your machine.
+
+The one exception is opt-in and off by default: with `CONFIG.digest.enabled` switched
+on she fetches the RSS feeds you list. Those are plain GETs for public feeds — no
+conversation, no memory, no identifier beyond a user agent — but they are outbound
+traffic, so the "never touches the network" claim holds only while this is off.
 
 ## License note (TTS is GPL-3.0)
 

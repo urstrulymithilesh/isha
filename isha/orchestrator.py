@@ -35,13 +35,15 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
-from isha.context import (build_messages, episode_context, knowledge_context,
-                          next_step_nudge, now_context, self_state_context,
-                          shared_history_context)
+from isha.context import (build_messages, digest_context, episode_context,
+                          knowledge_context, next_step_nudge, now_context,
+                          self_state_context, shared_history_context)
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
 from isha.memory.episodes import EpisodeStore, Summariser
+from isha.digest.feeds import FeedError, fetch_feed
+from isha.digest.parse import asks_whats_new
 from isha.memory.corpus import subjects_mentioned
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.actions.parse import (MediaCommand, OpenCommand, UnknownTarget,
@@ -172,6 +174,7 @@ class Orchestrator:
         extractor: FactExtractor | None = None,
         episodes: EpisodeStore | None = None,
         corpus=None,
+        digest=None,
         text_channel=None,
         summariser: Summariser | None = None,
         scheduler=None,
@@ -188,6 +191,7 @@ class Orchestrator:
         self.extractor = extractor      # None => no fact extraction
         self.episodes = episodes        # None => no episodic memory
         self.corpus = corpus            # None => nothing learned from documents
+        self.digest = digest            # None => she reads no sources
         self.text_channel = text_channel  # None => no UI attached
         self.summariser = summariser
         self.scheduler = scheduler      # None => timers/reminders disabled
@@ -219,6 +223,8 @@ class Orchestrator:
         self._catchup_task: asyncio.Task[None] | None = None
         self._summary_task: asyncio.Task[None] | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
+        self._digest_task: asyncio.Task[None] | None = None
+        self._nudged = False        # the new-arrivals mention is once per session
         self._alerts: list[str] = []
         self._system_prompt = system_prompt
         self._history: list[Message] = []  # conversation turns only; persona + facts added per turn
@@ -242,6 +248,11 @@ class Orchestrator:
         # that came due while she was closed (or the laptop slept) fires now.
         if self.scheduler is not None:
             self._scheduler_task = asyncio.create_task(self.scheduler.run())
+        # Reading her sources. Backgrounded and SILENT: unlike the scheduler, this
+        # loop can never speak. Its first pass is the reconcile — a machine that was
+        # closed through the interval fetches once on waking, not once per missed one.
+        if self.digest is not None and CONFIG.digest.enabled:
+            self._digest_task = asyncio.create_task(self._read_sources_loop())
         async for frame in self.transport.capture():
             await self._handle_frame(frame)
             n += 1
@@ -255,8 +266,9 @@ class Orchestrator:
                 await self._summarise_pending()
             except Exception as e:               # noqa: BLE001 - never block shutdown
                 print(f"  [memory] could not summarise this session: {e}")
-        if self._scheduler_task is not None:
-            self._scheduler_task.cancel()        # tick loop is infinite; stop it on exit
+        for loop in (self._scheduler_task, self._digest_task):
+            if loop is not None:
+                loop.cancel()                    # infinite loops; stop them on exit
         for task in (self._catchup_task, self._extract_task):
             if task is not None and not task.done():
                 try:
@@ -497,6 +509,14 @@ class Orchestrator:
                         self._history.append(Message("assistant", ask))
                         self._remember_turn(text, ask)
                         return
+            # What she has read from her sources. Checked before the knowledge block
+            # so "anything new?" is a digest question rather than a corpus search, and
+            # recall mode for the usual reason: reciting a real list needs accuracy.
+            if self.digest is not None:
+                digest_note = self._handle_digest_query(text)
+                if digest_note is not None:
+                    extra.append(digest_note)
+                    recall_mode = True
             if _asks_about_shared_history(text) and self.store is not None:
                 extra.append(shared_history_context(self.store.all_facts()))
                 recall_mode = True
@@ -523,6 +543,13 @@ class Orchestrator:
                         return
                 if note is not None:
                     extra.append(Message("system", note))
+            # Opt-in, and last, so it never displaces what he actually asked about.
+            # Skipped in recall mode: an accurate recitation is not the place to bolt
+            # a "by the way" onto.
+            if self.digest is not None and not recall_mode:
+                nudge = self._digest_nudge()
+                if nudge is not None:
+                    extra.append(nudge)
             # Recall questions drop the few-shot examples: they are vivid stories and
             # the model recites them back as history. Accuracy over register here.
             prompt = recall_prompt() if recall_mode else self._system_prompt
@@ -697,6 +724,90 @@ class Orchestrator:
             exchange = f"The user said: {user_text}\nYou replied: {reply}"
             self._extract_task = asyncio.create_task(
                 self._extract_facts(exchange, turn_ids=(uid, aid)))
+
+    async def _read_sources_loop(self) -> None:
+        """Read her sources on a wall-clock interval. Silent, forever, best-effort.
+
+        Never speaks and never interrupts — a headline is not time-critical, and the
+        one thing the scheduler is allowed to do (cut into his day) is exactly what
+        this must not. That is also why it is not built on the Scheduler: reusing the
+        class would mean reusing an alert path whose whole purpose is to interrupt.
+
+        Network work goes to a thread so a slow or hanging feed cannot stall the mic
+        loop, and every failure is caught: a source that is down is a quiet log line,
+        never a dead session and never a turn where she claims to have read something.
+        """
+        while True:
+            try:
+                if self.digest.due(interval_hours=CONFIG.digest.interval_hours):
+                    await self._read_sources_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:                 # noqa: BLE001 - never kill the loop
+                print(f"  [sources] check failed: {type(e).__name__}: {e}")
+            await asyncio.sleep(max(60.0, CONFIG.digest.interval_hours * 3600 / 12))
+
+    async def _read_sources_once(self) -> int:
+        """One pass over every configured source. Returns how many items were new."""
+        added = 0
+        for name, url in CONFIG.digest.sources:
+            try:
+                items = await asyncio.to_thread(
+                    fetch_feed, url, name,
+                    timeout=CONFIG.digest.fetch_timeout,
+                    max_bytes=CONFIG.digest.max_bytes,
+                    limit=CONFIG.digest.items_per_source)
+            except FeedError as e:
+                print(f"  [sources] {name}: {e}")
+                continue
+            new = self.digest.add(items)
+            added += new
+            print(f"  [sources] {name}: {len(items)} item(s), {new} new")
+        # Stamped even when everything failed, so a source that is down does not mean
+        # retrying on every tick for as long as it stays down.
+        self.digest.set_last_fetch(datetime.now())
+        return added
+
+    def _handle_digest_query(self, text: str) -> Message | None:
+        """"Anything new?" — answered from the table, or honestly not at all.
+
+        Deterministic trigger for the usual reason, plus one specific to this: the
+        answer is a list of things from outside the machine, and a model asked to
+        decide *whether* to volunteer them would sometimes volunteer them into a
+        conversation about something else entirely.
+        """
+        query = asks_whats_new(text, [name for name, _ in CONFIG.digest.sources])
+        if query is None:
+            return None
+        items = self.digest.untold(limit=CONFIG.digest.max_items_told)
+        if query.source is not None:
+            items = [i for i in items if i.source == query.source]
+        print(f"  [sources] asked what's new — {len(items)} item(s) to tell him"
+              + (f" (from {query.source})" if query.source else ""))
+        self.digest.mark_told(i.id for i in items)
+        self._nudged = True          # he has just been told; no nudge on top of it
+        return digest_context(items, source_label=query.source)
+
+    def _digest_nudge(self) -> Message | None:
+        """Opt-in, once a session, and only ever riding on a reply he asked for.
+
+        Never an unprompted announcement. The rule from the beginning of this project
+        is that she interrupts only for things that are time-critical, and news is the
+        definition of what is not; a thing that talks at you unbidden is a thing you
+        turn off. So the strongest version of "remind me every now and then" that
+        survives that rule is a single line appended to a reply already happening.
+        """
+        if self._nudged or not CONFIG.digest.nudge or self.digest is None:
+            return None
+        waiting = self.digest.untold_count()
+        if not waiting:
+            return None
+        self._nudged = True
+        return Message("system", (
+            f"Separately: {waiting} thing(s) you read from your sources have not been "
+            "mentioned to him yet. After answering him, add ONE short clause saying "
+            "you came across something and can tell him if he wants. Do NOT say what "
+            "it was, do not list anything, and do not let it take over the reply."))
 
     async def _handle_action_command(self, text: str) -> str | None:
         """Open something, press a media key, or look for a file — then tell her what
