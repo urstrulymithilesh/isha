@@ -55,6 +55,7 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
     extractor = None
     episodes = None
     summariser = None
+    corpus = None
     if use_ollama:
         from isha.llm.ollama import OllamaLLM
         from isha.memory.embedder import FastEmbedEmbedder
@@ -76,6 +77,9 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
             print(f"  [memory] seeded {n} core/self facts (first run)")
         extractor = FactExtractor(llm)
         episodes = EpisodeStore(CONFIG.memory.db_path, FastEmbedEmbedder())
+        if CONFIG.knowledge.enabled:
+            from isha.memory.corpus import CorpusStore
+            corpus = CorpusStore(CONFIG.memory.db_path, FastEmbedEmbedder())
         summariser = Summariser(llm)
         schedule_store = SqliteScheduleStore(CONFIG.memory.db_path)
     else:
@@ -88,6 +92,7 @@ def build_orchestrator(*, use_ollama: bool = False, input_device: int | None = N
         transcriber=transcriber, llm=llm, synthesizer=synthesizer,
         system_prompt=SYSTEM_PROMPT, preroll_frames=ms_to_chunks(CONFIG.audio.preroll_ms),
         store=store, extractor=extractor, episodes=episodes, summariser=summariser,
+        corpus=corpus,
         text_channel=text_channel,
         on_state_change=_print_state,
     )

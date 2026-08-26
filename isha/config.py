@@ -121,6 +121,24 @@ class ScheduleConfig:
     overdue_note_after_seconds: int = 60  # later than this -> she admits how late it is
 
 
+@dataclass(frozen=True)
+class KnowledgeConfig:
+    """What she has read. `python -m isha learn <name> <path>` fills it."""
+    enabled: bool = True
+    top_k: int = 2                       # passages considered per turn
+    chunk_chars: int = 800               # ~200 tokens; two of them still fit num_ctx
+    char_budget: int = 1200              # hard cap on what gets injected in one turn
+    # Cosine DISTANCE gate. Above this, the closest passage is not actually about what
+    # he said, and injecting it would drag a document into a conversation about his day.
+    # MEASURED on bge-small against a real ingested document: eight genuine questions
+    # about it landed 0.182-0.446, eight ordinary utterances 0.478-0.586. The gate sits
+    # just inside that gap. The margin is thin (0.032), and on a wider corpus the two
+    # clusters will overlap — when they do, move this DOWN. A missed retrieval is a
+    # question she answers without the document; a false one puts a paragraph about
+    # guitar strings into a conversation about his day.
+    max_distance: float = 0.46
+
+
 def _default_apps() -> dict[str, str]:
     """What "open X" is allowed to reach. Add a line here to teach her a new one — a
     protocol URL, an exe on PATH, a full path, a folder, or a website.
@@ -179,6 +197,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
 
 
 CONFIG = Config()

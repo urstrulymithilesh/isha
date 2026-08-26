@@ -54,6 +54,12 @@ Working end to end, offline:
   so a failed open is admitted rather than confirmed. Deleting, moving and running
   arbitrary scripts are deliberately excluded.
 
+- **Things she has read** — `python -m isha learn guitar ./notes/guitar.md`. Documents
+  are chunked, embedded and retrieved when what he says is close enough to them, so a
+  corpus never barges into small talk. She answers from the passages or says they don't
+  cover it — right about five times in six, which is the honest number, not a solved
+  problem.
+
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
 

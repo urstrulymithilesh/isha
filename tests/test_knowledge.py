@@ -1,0 +1,143 @@
+"""Learned-document memory: chunking, ingest, the distance gate, and the injected block.
+
+Fake embedder, tmp db — no fastembed model, no LLM. The gate VALUE itself was chosen
+from real bge-small numbers (see config.knowledge.max_distance); what is tested here is
+that a gate is applied at all, and that the block never lets her go beyond the text.
+"""
+
+import zlib
+
+from isha.context import knowledge_context
+from isha.memory.corpus import CorpusStore, chunk_text
+
+
+class FakeEmbedder:
+    """Deterministic bag-of-words vector so distances are predictable. Words shared
+    between query and chunk pull them together; nothing else does."""
+
+    VOCAB = ("guitar", "string", "tune", "humidity", "dinner", "work", "sister")
+
+    def embed(self, texts):
+        out = []
+        for t in texts:
+            low = t.lower()
+            vec = [1.0 if w in low else 0.0 for w in self.VOCAB]
+            # A tiny identity component so two unrelated texts are never identical.
+            vec.append((zlib.crc32(low.encode()) % 1000) / 100000.0)
+            out.append(vec)
+        return out
+
+
+def _store(tmp_path):
+    return CorpusStore(tmp_path / "k.db", FakeEmbedder())
+
+
+# -- chunking ---------------------------------------------------------------
+
+
+def test_chunks_break_on_paragraphs_not_mid_sentence():
+    text = "one two three.\n\nfour five six.\n\nseven eight nine."
+    chunks = chunk_text(text, chunk_chars=20)
+    assert chunks == ["one two three.", "four five six.", "seven eight nine."]
+    assert all(not c.startswith(" ") for c in chunks)
+
+
+def test_short_paragraphs_are_packed_together():
+    text = "aaa\n\nbbb\n\nccc"
+    assert chunk_text(text, chunk_chars=1000) == ["aaa\n\nbbb\n\nccc"]
+
+
+def test_a_paragraph_longer_than_the_budget_is_kept_whole():
+    """Splitting it would do exactly the mid-sentence damage the packing avoids."""
+    long = "x" * 500
+    assert chunk_text(long, chunk_chars=100) == [long]
+
+
+# -- ingest -----------------------------------------------------------------
+
+
+def test_ingest_stores_and_lists(tmp_path):
+    doc = tmp_path / "guitar.md"
+    doc.write_text("tune the guitar\n\nchange the string", encoding="utf-8")
+    s = _store(tmp_path)
+    assert s.ingest("guitar", doc, chunk_chars=20) == 2
+    assert s.corpora() == [("guitar", 2, 1)]
+
+
+def test_reingesting_a_source_replaces_it(tmp_path):
+    """Fixing a typo and running again must not double every answer."""
+    doc = tmp_path / "guitar.md"
+    doc.write_text("tune the guitar", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc)
+    doc.write_text("tune the guitar properly", encoding="utf-8")
+    s.ingest("guitar", doc)
+    assert s.corpora() == [("guitar", 1, 1)]
+
+
+def test_ingest_reads_a_whole_folder_and_skips_unreadable_types(tmp_path):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.md").write_text("guitar", encoding="utf-8")
+    (folder / "b.txt").write_text("string", encoding="utf-8")
+    (folder / "c.pdf").write_bytes(b"%PDF-not-read")
+    s = _store(tmp_path)
+    assert s.ingest("guitar", folder) == 2
+
+
+def test_forget_drops_the_whole_corpus(tmp_path):
+    doc = tmp_path / "guitar.md"
+    doc.write_text("tune the guitar\n\nchange the string", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc, chunk_chars=20)
+    assert s.forget("guitar") == 2
+    assert s.corpora() == []
+    assert s.search("guitar", max_distance=9) == []
+
+
+# -- the gate ---------------------------------------------------------------
+
+
+def test_an_unrelated_question_retrieves_nothing(tmp_path):
+    """The gate IS the trigger — there is no keyword parser in front of this, so a
+    loose gate is the difference between a useful passage and a document barging into
+    small talk."""
+    doc = tmp_path / "guitar.md"
+    doc.write_text("tune the guitar string", encoding="utf-8")
+    s = _store(tmp_path)
+    s.ingest("guitar", doc)
+    assert s.search("how was work", max_distance=0.46) == []
+    assert s.search("how do I tune the guitar", max_distance=0.46)
+
+
+def test_search_on_an_empty_corpus_is_empty(tmp_path):
+    assert _store(tmp_path).search("anything", max_distance=9) == []
+
+
+# -- what she is told -------------------------------------------------------
+
+
+class _P:
+    def __init__(self, text, source="guitar.md"):
+        self.text, self.source, self.corpus, self.distance = text, source, "guitar", 0.1
+
+
+def test_no_passages_means_no_block():
+    assert knowledge_context([]) is None
+
+
+def test_the_block_names_the_source_and_forbids_going_beyond_it():
+    block = knowledge_context([_P("Standard tuning is E A D G B E.")])
+    assert "guitar.md" in block.content
+    # The two clauses that measurably changed behaviour: the passages are the COMPLETE
+    # extent of what she knows, and a question about the same subject that the text does
+    # not answer is still a question she cannot answer.
+    assert "COMPLETE extent" in block.content
+    assert "even if it is about the same subject" in block.content
+    assert "not yours to give" in block.content
+
+
+def test_the_block_respects_the_char_budget():
+    """Two passages plus persona plus history has to stay inside num_ctx."""
+    block = knowledge_context([_P("a" * 900), _P("b" * 900)], char_budget=1200)
+    assert "a" * 900 in block.content and "b" * 900 not in block.content

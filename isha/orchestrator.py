@@ -35,8 +35,9 @@ from isha.core.interfaces import (
     WakeWord,
 )
 from isha.config import CONFIG
-from isha.context import (build_messages, episode_context, next_step_nudge,
-                          now_context, self_state_context, shared_history_context)
+from isha.context import (build_messages, episode_context, knowledge_context,
+                          next_step_nudge, now_context, self_state_context,
+                          shared_history_context)
 from isha.core.state import ConversationState, disposition_for
 from isha.audio.frames import SAMPLE_RATE, ms_to_chunks
 from isha.audio.vad import Vad
@@ -153,6 +154,7 @@ class Orchestrator:
         store: MemoryStore | None = None,
         extractor: FactExtractor | None = None,
         episodes: EpisodeStore | None = None,
+        corpus=None,
         text_channel=None,
         summariser: Summariser | None = None,
         scheduler=None,
@@ -168,6 +170,7 @@ class Orchestrator:
         self.store = store              # None => memory disabled (e.g. Echo brain)
         self.extractor = extractor      # None => no fact extraction
         self.episodes = episodes        # None => no episodic memory
+        self.corpus = corpus            # None => nothing learned from documents
         self.text_channel = text_channel  # None => no UI attached
         self.summariser = summariser
         self.scheduler = scheduler      # None => timers/reminders disabled
@@ -408,6 +411,26 @@ class Orchestrator:
                     recall_mode = True
                     print(f"  [memory] temporal question ({window.label}) — "
                           f"{len(found)} episode(s) on record")
+            # Anything he has had her read. No parser and no keyword list: the distance
+            # gate IS the trigger, so a passage only appears when it is genuinely about
+            # what he just said. Skipped in recall mode — a question about last Tuesday
+            # wants the conversation record, not a document.
+            if self.corpus is not None and not recall_mode:
+                passages = self.corpus.search(
+                    text, k=CONFIG.knowledge.top_k,
+                    max_distance=CONFIG.knowledge.max_distance)
+                block = knowledge_context(
+                    passages, char_budget=CONFIG.knowledge.char_budget)
+                if block is not None:
+                    extra.append(block)
+                    # Same remedy as memory questions, and it was needed for the same
+                    # reason: with the few-shot examples in play she answered a question
+                    # the document did NOT cover by inventing string gauges, once
+                    # attributing the invention to the file by name. Dropping them took
+                    # that from 0/3 honest to 3/3.
+                    recall_mode = True
+                    print(f"  [knowledge] {len(passages)} passage(s) from "
+                          f"{passages[0].corpus!r} (closest {passages[0].distance:.3f})")
             if _asks_about_shared_history(text) and self.store is not None:
                 extra.append(shared_history_context(self.store.all_facts()))
                 recall_mode = True

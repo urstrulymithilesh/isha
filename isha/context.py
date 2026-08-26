@@ -152,6 +152,38 @@ def episode_context(episodes, window_label: str, *, now=None):
     )
 
 
+def knowledge_context(passages, *, char_budget: int = 1200):
+    """Give her the passages she has actually read, and nothing beyond them.
+
+    Same anchoring as everywhere else in this project, for the same reason: with a
+    topic in the air and no source in context, the model fills the gap from whatever
+    it half-remembers from pretraining and sounds exactly as confident either way.
+    Naming the source is deliberate — an answer she can attribute is one he can check.
+    """
+    kept, used = [], 0
+    for p in passages:
+        if used + len(p.text) > char_budget:
+            break
+        kept.append(p)
+        used += len(p.text)
+    if not kept:
+        return None
+    listing = "\n\n".join(f"[from {p.source}] {p.text}" for p in kept)
+    sources = ", ".join(sorted({p.source for p in kept}))
+    return Message(
+        "system",
+        "He has given you things to read. The text below is the COMPLETE extent of what "
+        f"you know about this subject — you have read nothing else about it, and you "
+        f"know nothing about it beyond these words:\n\n{listing}\n\nIf his question is "
+        "answered in that text, answer it and say nothing that is not written there. If "
+        "it is NOT answered there — even if it is about the same subject — then you do "
+        "not know, and the only honest reply is to say the text you have does not cover "
+        "it. Numbers, names, measurements and recommendations that do not appear above "
+        f"are not yours to give. Never say {sources} said something it does not say. "
+        "One or two short spoken sentences, no lists.",
+    )
+
+
 def build_messages(
     system_prompt: str,
     facts: Sequence[Fact],

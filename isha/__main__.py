@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 from isha import __version__
 from isha.config import CONFIG
@@ -207,6 +208,81 @@ def _seed_cmd(argv: list[str]) -> int:
     return 0
 
 
+def _learn_cmd(argv: list[str]) -> int:
+    """Give her something to read, and see what she has read.
+
+        python -m isha learn guitar ./docs/guitar.md   # ingest a file or a folder
+        python -m isha learn --list                    # what she has learned
+        python -m isha learn --forget guitar           # drop that corpus entirely
+        python -m isha learn --ask "how do I tune it"  # what she'd retrieve, and how close
+    """
+    from isha.memory.corpus import CorpusStore
+    from isha.memory.embedder import FastEmbedEmbedder
+
+    CONFIG.memory.db_path.parent.mkdir(parents=True, exist_ok=True)
+    store = CorpusStore(CONFIG.memory.db_path, FastEmbedEmbedder())
+
+    def summary() -> None:
+        corpora = store.corpora()
+        if not corpora:
+            print("She hasn't read anything yet.")
+            return
+        print("She has read:")
+        for name, chunks, sources in corpora:
+            print(f"  {name:20} {chunks:4} passage(s) from {sources} file(s)")
+
+    if "--list" in argv or not argv:
+        summary()
+        store.close()
+        return 0
+
+    if "--forget" in argv:
+        rest = argv[argv.index("--forget") + 1:]
+        if not rest:
+            print("Which one? e.g. python -m isha learn --forget guitar")
+            store.close()
+            return 2
+        gone = store.forget(rest[0])
+        print(f"Forgot {gone} passage(s) from {rest[0]!r}." if gone
+              else f"Nothing stored under {rest[0]!r}.")
+        store.close()
+        return 0
+
+    if "--ask" in argv:
+        rest = argv[argv.index("--ask") + 1:]
+        if not rest:
+            print('Ask what? e.g. python -m isha learn --ask "how do I tune it"')
+            store.close()
+            return 2
+        # No distance gate here on purpose: this is the tool for CHOOSING the gate, so
+        # it has to show the near misses too.
+        for p in store.search(rest[0], k=CONFIG.knowledge.top_k):
+            marker = "USED " if p.distance <= CONFIG.knowledge.max_distance else "below"
+            print(f"  [{marker} d={p.distance:.3f}] ({p.corpus}/{p.source}) "
+                  f"{p.text[:160]}...")
+        print(f"\nGate is {CONFIG.knowledge.max_distance} (config.knowledge.max_distance).")
+        store.close()
+        return 0
+
+    if len(argv) < 2:
+        print("Usage: python -m isha learn <name> <file-or-folder>")
+        store.close()
+        return 2
+    name, path = argv[0], Path(argv[1])
+    if not path.exists():
+        print(f"No such file or folder: {path}")
+        store.close()
+        return 2
+    stored = store.ingest(name, path, chunk_chars=CONFIG.knowledge.chunk_chars)
+    if not stored:
+        print(f"Nothing readable in {path} (looking for .txt, .md, .markdown, .rst).")
+    else:
+        print(f"Read {stored} passage(s) into {name!r}.")
+    summary()
+    store.close()
+    return 0
+
+
 def _run(argv: list[str]) -> int:
     from isha.audio.calibrate import calibrate
     from isha.audio.devices import DeviceError
@@ -300,6 +376,8 @@ def main(argv: list[str] | None = None) -> int:
         return _memory_cmd(argv[1:])
     if argv and argv[0] == "seed":
         return _seed_cmd(argv[1:])
+    if argv and argv[0] == "learn":
+        return _learn_cmd(argv[1:])
     if argv and argv[0] == "smoke":
         try:
             import isha.smoke

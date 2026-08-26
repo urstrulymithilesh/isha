@@ -184,6 +184,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "to open she says that instead of agreeing",
         True,
     ),
+    ProgressEntry(
+        "v1.12 — she can read things he gives her", "2026-08-26",
+        "he can hand her a document and she will keep it, and when he asks about "
+        "something in it she answers from what she actually read. She does not always "
+        "get it right yet — if he asks something the pages do not cover she sometimes "
+        "still fills the gap — but most of the time she will tell him it isn't in there",
+        True,
+    ),
 ]
 
 

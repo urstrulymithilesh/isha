@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `2e7121e`. 281 tests, 45 commits, 75 files, ~9.1k lines of
+Last updated at commit `HEAD`. 293 tests, 47 commits, 78 files, ~9.5k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -136,6 +136,20 @@ says so rather than confirming, an unknown app is admitted rather than agreed to
 an empty search is forbidden from inventing a filename. Deleting, moving and running
 scripts are deliberately excluded.
 
+### Things she has read (learned knowledge)
+`python -m isha learn <name> <file-or-folder>` chunks a document on paragraph
+boundaries, embeds it, and stores it in a named corpus in the same db. `--list` shows
+what she has read, `--forget <name>` drops a corpus whole, `--ask "..."` shows what
+she would retrieve and how close it scored.
+
+There is **no parser and no keyword list** in front of this — the cosine distance gate
+IS the trigger, so a passage appears only when what he said is genuinely about it.
+Gate measured on bge-small against a real document: eight real questions about it
+landed 0.182-0.446, eight ordinary utterances 0.478-0.586, so the gate sits at **0.46**
+inside that gap. The margin is thin (0.032) and will close on a wider corpus — move it
+DOWN when it does. A missed retrieval is harmless; a false one puts a paragraph about
+guitar strings into a conversation about his day.
+
 ### Honesty guards
 - **Real clock injected every turn** (`context.now_context()`). She used to answer
   "about 3:47 PM" at 09:51.
@@ -175,7 +189,8 @@ wake-after-a-long-reply.
 | Embeddings | `BAAI/bge-small-en-v1.5` (fastembed, CPU) |
 | Schedule | tick 2s · stale 120min · late-note 60s |
 | Actions | registry of 23 openable targets · search depth 4 · top-5 results |
-| Progress log | 21 entries, latest **v1.11** |
+| Knowledge | top-2 passages · 800-char chunks · 1200-char budget · distance gate 0.46 |
+| Progress log | 22 entries, latest **v1.12** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -227,7 +242,7 @@ The ten-step plan, sequenced by dependency and honest effort.
 | 5 | Episodic + temporal memory | **done** |
 | 6 | GPU enablement | parked, externally blocked |
 | 7 | Agentic computer use (open / find / media) | **done** |
-| 8 | Skill mastery (RAG corpora + step-by-step guidance) | not started |
+| 8 | Skill mastery (RAG corpora) | **done** — guidance mode not built |
 | 9 | Proactive daily learning | not started |
 | 10 | Remote access (LAN / WireGuard client) | not started |
 
@@ -311,6 +326,26 @@ at him as things *he* had said. The fix was not a firmer prompt. It was two line
 
 **Pattern:** if a prompt rule is worth having, it is worth enforcing in code. Ask the
 model for the shape, then check the shape.
+
+### Retrieval hands her a topic, and she will finish the sentence
+Asked something the ingested document did *not* cover — string gauges, in a document
+about tuning — she invented numbers **3/3**, and once attributed the invention to the
+source file by name. A citation on a fabrication is worse than a bare one: it looks
+checkable. No distance threshold fixes this, because the passage genuinely *is* about
+the subject; it just does not answer the question.
+
+Two things moved it, both already-proven mechanisms here: `recall_prompt()` (drop the
+few-shot examples — 4th use of that remedy) and a block that says the passages are the
+**complete extent** of what she knows, that a question about the same subject the text
+does not answer is still one she cannot answer, and that numbers and recommendations
+not written above are not hers to give. **0/3 honest → 5/6.**
+
+A cosmetic tweak asking her not to say "the text" put a fabrication straight back in.
+Register loses to accuracy here, same as it did for memory questions.
+
+**Ceiling, stated plainly: 5/6, not solved.** The remaining miss is the same 3B
+grounding ceiling as everywhere else. A verification round-trip would likely fix it and
+costs another 3-7s per turn, which is why it was not done.
 
 ### Config that only applies on first run silently rots
 `seed_if_needed` gated on "does this db have any core facts yet", so editing `seed.py`
@@ -415,12 +450,13 @@ isha/
   stt/                 whisper.py, cleanup.py (wake-prefix stripping)
   tts/                 piper.py, stub.py, sentences.py, speech_text.py
   llm/                 ollama.py, echo.py
-  memory/              store, episodes, temporal, extraction, seed, progress,
-                       embedder, forget_parse
+  memory/              store, episodes, corpus, temporal, extraction, seed,
+                       progress, embedder, forget_parse
+  actions/             parse.py (deterministic registry), run.py (does it)
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 281 tests
+tests/                 293 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -429,11 +465,14 @@ diagnose.py            audio device tools
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
 .venv\Scripts\python.exe -m isha smoke          # live end-to-end, ~75s
-.venv\Scripts\python.exe -m pytest -q           # 281 tests, ~2s
+.venv\Scripts\python.exe -m pytest -q           # 293 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
 .venv\Scripts\python.exe -m isha seed           # re-apply seeded core/self facts
+.venv\Scripts\python.exe -m isha learn <name> <path>   # give her something to read
+.venv\Scripts\python.exe -m isha learn --list          # what she has read
+.venv\Scripts\python.exe -m isha learn --ask "..."     # what she'd retrieve, + distance
 .venv\Scripts\python.exe -m isha say "text"     # test her voice
 .venv\Scripts\python.exe -m isha devices        # list mics
 .venv\Scripts\python.exe spike.py               # verify the install
@@ -467,17 +506,23 @@ diagnose.py            audio device tools
 
 ## 10. Where things stand
 
-Against the full vision in §1, this is roughly **45/100** — voice, personality, memory,
-episodic memory, timers, always-listening, the text UI and a first real slice of
-agentic execution all work; skill mastery, remote access, the custom voice and voice
-auth do not exist yet, and those are the hardest parts. The agentic slice is
-deliberately narrow — it opens, finds and controls, it does not delete or run.
+Against the full vision in §1, this is roughly **55/100** — voice, personality, memory,
+episodic memory, timers, always-listening, the text UI, a first real slice of agentic
+execution and retrieval over documents he gives her all work; proactive learning,
+remote access, the custom voice and voice auth do not exist yet. The agentic slice is
+deliberately narrow — it opens, finds and controls, it does not delete or run — and
+the knowledge slice answers from what she read at about 5/6, not at expert level.
 
 Against "something worth using every day", it is much further along — closer to 60–70%.
 She wakes, listens, remembers, keeps time, admits what she does not know, and can be
 talked to or typed at.
 
-The next real step is **skill mastery (§5, step 8)** — on-demand RAG corpora and
-step-by-step guidance. Cheaper things worth doing first: widen the action registry as
-he finds phrasings that miss, and give the destructive actions (delete, move, run) the
-ask-first treatment if they are wanted at all.
+The next real step is **proactive daily learning (§5, step 9)** or **remote access
+(step 10)**. Cheaper things worth doing first: widen the action registry as he finds
+phrasings that miss; watch the knowledge distance gate as more documents go in and drop
+it if a corpus starts appearing in small talk; and give the destructive actions (delete,
+move, run) the ask-first treatment if they are wanted at all.
+
+Step 8's **step-by-step guidance mode** ("walk me through it") was deliberately not
+built — retrieval answers questions today, and guidance needs multi-turn position
+state, which is the dialogue-manager rabbit hole §4 already declined once.
