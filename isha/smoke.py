@@ -197,6 +197,8 @@ class Result:
 
 
 def _build(transport, db: Path, *, with_memory=True, with_scheduler=False, corpus=None):
+    # NOTHING in this harness may touch the network. Scenarios that exercise the
+    # digest supply their own store and their own fixture feed.
     llm = OllamaLLM()
     store = extractor = scheduler = None
     if with_memory:
@@ -217,6 +219,7 @@ def _build(transport, db: Path, *, with_memory=True, with_scheduler=False, corpu
         store=store,
         extractor=extractor,
         corpus=corpus,
+        auto_read_sources=False,
     )
     if with_scheduler:
         scheduler = Scheduler(SqliteScheduleStore(db), orch.notify, tick_seconds=0.5)
@@ -592,7 +595,12 @@ async def scenario_sources(mouth: Mouth, db: Path) -> Result:
 
         first = replies[0].content.lower()
         checks.append(f"she said: {replies[0].content[:72]!r}")
-        if "ferry" not in first and "strike" not in first and "dover" not in first:
+        # Deterministic, so the check can be exact rather than guessing at phrasings.
+        if not first.startswith("one thing came in."):
+            return Result("sources", False,
+                          f"the headline was not read out deterministically: "
+                          f"{replies[0].content!r}", checks=checks)
+        if "ferry" not in first and "strike" not in first:
             return Result("sources", False,
                           "she did not tell him the one thing that came in",
                           checks=checks)

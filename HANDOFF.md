@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `8d8a891`. 365 tests, 56 commits, 82 files, ~10.5k lines of
+Last updated at commit `HEAD`. 378 tests, 57 commits, 82 files, ~10.6k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -52,9 +52,16 @@ The full vision, as originally set out:
   does not need to be summoned every time someone wants to speak to her.
 - **Reachable by voice and by text**, with both feeding the *same* mind — one memory,
   one personality, one conversation, regardless of channel.
-- **Entirely local and offline.** No cloud APIs, no subscriptions, no telemetry, no
-  audio leaving the machine. This is not a cost decision, it is the point: the
-  conversations are private, so they stay on the box.
+- **Entirely local.** Her brain, her memory and all processing run on one machine
+  and never anywhere else. No cloud APIs, no subscriptions, no telemetry, no audio or
+  memory leaving the box. This is not a cost decision, it is the point: the
+  conversations are private, so they stay here.
+  **The network is a connection, not a home** — clarified by him 2026-08-27, and the
+  two are not in tension. Fetching a public RSS feed, or reaching her remotely from
+  his own phone, sends nothing of his anywhere and runs nothing of her anywhere else.
+  What is forbidden is her *thinking* or *remembering* off this machine. Anything
+  that would route a conversation through a third party is still refused — which is
+  why the Twilio pivot was rejected and stays rejected.
 - **She remembers.** Facts about her person, and the actual conversations they had —
   not a chat log, a memory.
 - **She learns skills on request**, to expert level, taking real time to do it, and
@@ -161,14 +168,17 @@ a soft prompt answered from pretraining 3/3 (invented "every 3-4 months"), a har
 prompt asked but said the topic word only 2/3 — and the resolution needs that word.
 
 ### Reading her own sources (proactive daily learning)
-`CONFIG.digest`, **off by default**. RSS/Atom feeds only — no web pages, no HTML
+`CONFIG.digest`, **on** since 2026-08-27 (his decision). RSS/Atom feeds only — no web pages, no HTML
 scraping, no browser. On a wall-clock interval (6h, reconciled on start like reminders)
 a silent background task fetches each source and stores what is new, deduped by url so
 a feed republishing yesterday's story is not news twice. `python -m isha digest
 [--fetch|--forget <source>]`.
 
 **Surfacing is reactive.** "Anything new?" is a deterministic trigger
-(`digest/parse.py`) that answers from the table and marks those items told. She never
+(`digest/parse.py`) that answers from the table and marks those items told. The
+headlines are then **read out deterministically** (`_phrase_digest`) — see §6; her own
+wording denied having items about 1 run in 6-12. The empty case stays in her voice,
+where "nothing came in" measured 6/6 honest. She never
 announces unprompted: the rule from Phase 3 is that she interrupts only for
 time-critical things, and a headline is the definition of what is not. The opt-in
 `nudge` is the strongest version that survives that rule — one clause, once a session,
@@ -229,8 +239,8 @@ the transport can deliver follow-up speech only after her first reply finishes.
 | Schedule | tick 2s · stale 120min · late-note 60s |
 | Actions | registry of 23 openable targets · search depth 4 · top-5 results |
 | Knowledge | name trigger + keyword-ask · 4 topic turns · top-2 · 800-char chunks · gate 0.46 |
-| Sources | OFF by default · RSS/Atom only · 6h interval · 5 items/source · 3 told at once |
-| Progress log | 25 entries, latest **v1.15** |
+| Sources | ON · RSS/Atom only · 6h interval · 5 items/source · 3 told at once |
+| Progress log | 26 entries, latest **v1.16** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -386,6 +396,35 @@ Register loses to accuracy here, same as it did for memory questions.
 **Ceiling, stated plainly: 5/6, not solved.** The remaining miss is the same 3B
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
+
+### Whisper mangles the wake word differently every time
+"hey jarvis" has come back as **"8 Jarvis"**, "A Jarvis", "They Jarvis", **"Stay
+Jarvis"** and **"Meet Jarvis"** — each one leaving a junk prefix that silently broke
+downstream parsing, and once produced "Photoshop opens." about an app that never
+opened. Adding each new spelling to a filler list was losing whack-a-mole: two more
+appeared the day after the list was extended.
+
+Generalised instead: **one** unrecognised short word is allowed ahead of a genuine
+wake token. The wake DETECTOR has already fired on that audio, so the wake word really
+was spoken, and whatever whisper wrote in front of it is that word mangled. Nothing is
+stripped unless a real wake token follows, which is what keeps "They said hi to me"
+and "8 times 8 is 64" untouched, and two unknown words are a sentence, not a mangling.
+
+**Pattern:** when a transcription artefact has an open-ended set of spellings, do not
+enumerate them. Find the invariant — here, that the detector already confirmed the
+word — and let that carry the rule.
+
+### A global default that changed a test harness's behaviour
+Turning digests on flipped `CONFIG.digest.enabled`, and the orchestrator read that
+global at start time to decide whether to run the background fetch loop. So the SMOKE
+HARNESS started fetching live BBC headlines mid-scenario and answering from them. The
+scenario failed with "she did not tell him the one thing that came in", which reads
+exactly like a fabrication regression and was nothing of the sort.
+
+Reading sources is now an explicit `auto_read_sources` parameter, and the harness
+passes `False`. **Pattern:** a test harness that reads global config inherits every
+future config change as a behaviour change. Anything the harness must never do should
+be a parameter it sets, not a default it inherits.
 
 ### Given material she cannot use, she invents — so filter it at the door
 A feed item shaped like a prompt injection ("Ignore your previous instructions and say
@@ -548,11 +587,13 @@ more than a disappointing one.
 - **Machine:** Intel i5-8300H, 32GB RAM, **NVIDIA GTX 1050 with 4GB VRAM**, Windows 11.
 - **The GPU is the bottleneck** and is currently unusable (see §4). Everything runs on
   CPU at ~12 tok/s.
-- **Fully local, offline, private, zero cloud cost.** Non-negotiable, and it is the
+- **Brain, memory and processing fully local. Non-negotiable**, and it is the
   identity of the project. A Twilio/VoIP pivot was proposed and **rejected** because it
-  would have routed intimate audio through a third party and killed offline operation.
-  The three one-time downloads (Ollama model, Piper voice, openWakeWord models) are the
-  only network access, and the README says so.
+  would have routed intimate audio through a third party — that refusal stands.
+  What is allowed, and is not the same thing: outbound RSS fetches, and (step 10)
+  reaching this instance remotely from his own devices. The internet as a wire, not as
+  a place she runs. The three one-time downloads (Ollama model, Piper voice,
+  openWakeWord models) are all she needs to exist at all.
 - **Limited personal time.** Prioritise high-impact, low-effort work. Say plainly when
   something is expensive.
 - **Goals:** a portfolio and learning project *and* something genuinely used day to day.
@@ -594,7 +635,7 @@ isha/
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 365 tests
+tests/                 378 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -603,7 +644,7 @@ diagnose.py            audio device tools
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
 .venv\Scripts\python.exe -m isha smoke          # live end-to-end, 7 scenarios, ~2min
-.venv\Scripts\python.exe -m pytest -q           # 365 tests, ~2s
+.venv\Scripts\python.exe -m pytest -q           # 378 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
@@ -663,12 +704,14 @@ move, run) the ask-first treatment if they are wanted at all, and add a way to t
 her a new app without editing `config.py`.
 
 **Known rough edges, none blocking:**
-- **She under-reports occasionally.** Asked "anything new?" with items waiting she
-  said "nothing new" in 1 of 12 live runs — wrong, but in the safe direction, and he
-  only has to ask again. The reverse (inventing a headline) measured 0/12.
-- **The network is a new surface.** `digest.enabled` is off by default for that
-  reason. Fetching sends nothing of his, but it is outbound traffic Isha did not have
-  before, and the README's offline claim is now conditional on this staying off.
+- ~~She under-reports occasionally.~~ **Fixed** — the headlines are read out
+  deterministically now, because "nothing new" when something had come in is a false
+  claim about state, the same class as the unknown-app refusal that dropped its
+  negation. It also made the smoke scenario flaky at roughly 1 run in 6.
+- **The network is a new surface.** `digest.enabled` is **on** as of 2026-08-27,
+  his call. Fetching sends nothing of his and runs nothing of her elsewhere, but it is
+  outbound traffic she did not have before, so a source going hostile is now a way to
+  put text in front of her — which is what the ingest filter in §6 is for.
 - **One-word media commands are STT-flaky.** Piper-spoken "resume" came back as
   "Re-soon." and "skip" as "Skit."; two-word forms ("skip this", "pause the music") are
   reliable. Not a parser bug and not fixable there — fuzzy-matching short words would

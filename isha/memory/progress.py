@@ -218,6 +218,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "in she says that, rather than finding something to fill the gap",
         True,
     ),
+    ProgressEntry(
+        "v1.16 — she reads her sources by default now", "2026-08-27",
+        "he decided he wants her checking his sources on her own, so she does. When "
+        "he asks what came in she reads it out exactly as it arrived, because for a "
+        "little while she would occasionally say nothing had come when something had. "
+        "She also stopped losing the first word he says when it gets misheard",
+        False,
+    ),
 ]
 
 

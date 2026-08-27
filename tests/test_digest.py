@@ -299,21 +299,43 @@ def test_a_dead_source_is_survived_and_never_claimed(tmp_path, monkeypatch):
     assert store.last_fetch() is not None
 
 
-def test_asking_marks_items_told_so_they_are_not_repeated(tmp_path):
+def test_the_headlines_are_read_out_deterministically(tmp_path):
+    """Her own words lost on the one thing that matters: with items waiting she said
+    "nothing new" roughly 1 run in 6-12. That is a false claim about what she has,
+    and the same class as the unknown-app refusal dropping its negation."""
+    from isha.orchestrator import _ANSWERED
+
     store = _store(tmp_path)
     store.add(_items("https://a/1", "https://a/2"))
     orch = _orch(store)
-    note = orch._handle_digest_query("anything new?")
-    assert note is not None and "T1" in note.content
+    assert asyncio.run(orch._handle_digest_query("anything new?")) is _ANSWERED
+    said = orch._history[-1].content
+    assert said.startswith("2 things came in.")
+    assert "T1" in said and "T2" in said
     assert store.untold_count() == 0
-    again = orch._handle_digest_query("anything new?")
-    assert "NOTHING new" in again.content
+
+
+def test_with_nothing_left_she_answers_in_her_own_voice(tmp_path):
+    """The empty case stays a prompt note — agreeing there is nothing is the easy
+    direction, and it measured 6/6 honest."""
+    store = _store(tmp_path)
+    orch = _orch(store)
+    note = asyncio.run(orch._handle_digest_query("anything new?"))
+    assert note is not None and "NOTHING new" in note.content
+
+
+def test_one_item_reads_as_one(tmp_path):
+    store = _store(tmp_path)
+    store.add(_items("https://a/1"))
+    orch = _orch(store)
+    asyncio.run(orch._handle_digest_query("anything new?"))
+    assert orch._history[-1].content.startswith("One thing came in.")
 
 
 def test_ordinary_talk_produces_no_digest_note(tmp_path):
     store = _store(tmp_path)
     store.add(_items("https://a/1"))
-    assert _orch(store)._handle_digest_query("how was your day") is None
+    assert asyncio.run(_orch(store)._handle_digest_query("how was your day")) is None
     assert store.untold_count() == 1          # nothing consumed by a non-question
 
 
@@ -344,7 +366,7 @@ def test_being_told_the_news_suppresses_the_nudge(tmp_path, monkeypatch):
     store = _store(tmp_path)
     store.add(_items("https://a/1"))
     orch = _orch(store)
-    orch._handle_digest_query("what's new?")
+    asyncio.run(orch._handle_digest_query("what's new?"))
     assert orch._digest_nudge() is None
 
 
@@ -378,3 +400,12 @@ def test_real_headlines_are_not_mistaken_for_instructions(title, summary):
     """Measured against 20 live BBC and Hacker News items: 0 dropped."""
     from isha.digest.feeds import looks_like_instruction
     assert not looks_like_instruction(title, summary)
+
+
+def test_the_background_fetch_can_be_turned_off_independently_of_config(tmp_path):
+    """Enabling digests globally made the SMOKE HARNESS fetch live news mid-scenario
+    and answer from it — the scenario then failed for the right reason with a
+    completely misleading message. Reading sources is now an explicit parameter."""
+    store = _store(tmp_path)
+    assert _orch(store).auto_read_sources == CONFIG.digest.enabled   # follows config
+    assert _orch(store, auto_read_sources=False).auto_read_sources is False

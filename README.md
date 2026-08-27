@@ -1,8 +1,13 @@
 # Isha
 
-A **fully-local, offline voice AI partner**. No cloud APIs, no cloud costs, no
-data ever leaves the machine. Say a wake word, talk to her, and she replies in
-voice — and she *remembers* you across sessions.
+A **fully-local voice AI partner**. Her brain, her memory and every piece of
+processing run on this machine and only this machine — no cloud APIs, no cloud costs,
+and no conversation or memory ever leaving it. Say a wake word, talk to her, and she
+replies in voice — and she *remembers* you across sessions.
+
+She does use the network, deliberately and narrowly: **as a connection, never as a
+place she lives.** She fetches the RSS feeds you list, and (once remote access lands)
+you can reach her from your own devices. Neither moves an ounce of her off the box.
 
 Built as a portfolio project under a real constraint: a laptop with a **GTX 1050
 (4GB VRAM)**. That constraint drives every architecture decision, and the whole
@@ -31,7 +36,7 @@ openWakeWord + Silero VAD · SQLite + sqlite-vec · custom asyncio orchestrator.
 
 ## Status
 
-Working end to end, offline:
+Working end to end, on-device:
 
 - **Voice loop** — wake word -> speech-to-text -> local LLM -> speech, on a custom
   asyncio preemption state machine (idle / listening / thinking / speaking) with
@@ -86,8 +91,10 @@ python -m piper.download_voices en_US-amy-medium --download-dir models
 python -c "import openwakeword.utils as u; u.download_models()"
 ```
 
-Those three downloads are the only time Isha touches the network. After them she
-runs entirely offline — pull your ethernet cable and she still works.
+Those three downloads are all Isha needs to *become* herself. After them, every
+part of her that thinks, listens, speaks or remembers works with the ethernet cable
+pulled out. The only things that want a connection are the optional extras — reading
+your RSS feeds, and reaching her remotely — and losing it costs you those, not her.
 
 > **Note:** the wake-word models install *inside* the virtualenv, so if you ever
 > delete and rebuild `.venv` you need to re-run that last command. `python spike.py`
@@ -148,13 +155,21 @@ threading, or the model boundary.
 
 ## Privacy
 
-Everything runs on-device and offline. Runtime data (`data/`, `*.db`, `*.wav`,
-`models/`) is gitignored and never leaves your machine.
+**The line that does not move:** her brain, her memory and all of her processing
+are local, always. The model, the transcription, the voice, the embeddings and the
+database all live here. Runtime data (`data/`, `*.db`, `*.wav`, `models/`) is
+gitignored, and no conversation, memory or audio is ever sent anywhere.
 
-The one exception is opt-in and off by default: with `CONFIG.digest.enabled` switched
-on she fetches the RSS feeds you list. Those are plain GETs for public feeds — no
-conversation, no memory, no identifier beyond a user agent — but they are outbound
-traffic, so the "never touches the network" claim holds only while this is off.
+**What does use the network**, as a connection rather than a home:
+
+- **Reading your sources** (`CONFIG.digest.enabled`, on) — plain GETs for the public
+  RSS feeds you list. Outbound only, and they carry no conversation, no memory and no
+  identifier beyond a user agent.
+- **Remote access** (planned) — reaching *your* Isha, running on *your* computer, from
+  your own devices. The audio travels; she does not.
+
+Neither is a cloud service, and neither moves any part of her off this machine. If
+that ever changes, this section is the thing to correct first.
 
 ## License note (TTS is GPL-3.0)
 

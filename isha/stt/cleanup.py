@@ -29,6 +29,10 @@ _FILLER = {"hey", "hi", "hello", "ok", "okay", "um", "uh", "so", "a", "hay",
 _LEADING_PUNCT = re.compile(r"^[\s,.!?;:\-—]+")
 
 
+def _is_filler(word: str) -> bool:
+    return word in _FILLER or word.isdigit()
+
+
 def strip_wake_prefix(text: str, wake_model: str) -> str:
     """Remove a leading wake-word utterance ("hey_jarvis" -> "hey", "jarvis").
 
@@ -43,6 +47,7 @@ def strip_wake_prefix(text: str, wake_model: str) -> str:
     cursor = _LEADING_PUNCT.sub("", text)
     saw_wake_token = False
     consumed = 0
+    unknown_before_wake = 0
     limit = len(wake_tokens) + 2          # the wake words themselves, plus a filler or two
     while consumed < limit:
         match = re.match(r"([A-Za-z']+|\d+)", cursor)
@@ -51,7 +56,18 @@ def strip_wake_prefix(text: str, wake_model: str) -> str:
         word = match.group(1).lower()
         if word in wake_tokens:
             saw_wake_token = True
-        elif not saw_wake_token and (word in _FILLER or word.isdigit()):
+        elif (not saw_wake_token and unknown_before_wake == 0
+              and len(word) <= 6 and not _is_filler(word)):
+            # ONE unrecognised short word is allowed ahead of the wake token, because
+            # the list of things whisper makes of "hey" has no end: "8 Jarvis", "A
+            # Jarvis", "They Jarvis", "Stay Jarvis", "Meet Jarvis" have all been seen
+            # live, each one silently breaking downstream parsing. The wake DETECTOR
+            # has already fired on this audio, so the wake word really was spoken —
+            # whatever whisper wrote in front of it is that word, mangled. Nothing is
+            # stripped unless a genuine wake token follows, which is what keeps
+            # ordinary sentences safe.
+            unknown_before_wake += 1
+        elif not saw_wake_token and _is_filler(word):
             pass                          # leading filler BEFORE the wake word ("hey ...")
         else:
             # Filler only counts ahead of the wake word. Past it, a word like "hello"

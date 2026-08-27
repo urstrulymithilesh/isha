@@ -1,6 +1,8 @@
 """Central config. Swapping a model or engine later is a change HERE, not in code.
 
-Every value is chosen to honor the fully-local, offline, CPU/GPU-split design.
+Every value is chosen to honor the fully-local, CPU/GPU-split design: her brain,
+memory and processing stay on this machine. The network is a connection (RSS,
+remote access), never a place any part of her runs.
 """
 
 from __future__ import annotations
@@ -125,13 +127,14 @@ class ScheduleConfig:
 class DigestConfig:
     """Sources she reads on a schedule. See isha/digest/feeds.py for the safety notes.
 
-    **OFF by default, and that is a deliberate stance, not caution.** Every other part
-    of Isha runs with the network unplugged, and the README says so. Turning this on
-    means she makes outbound requests while running — nothing of his is sent, but the
-    claim changes from "never touches the network" to "fetches these feeds and nothing
-    else". That is his call to make, not a default to inherit.
+    **ON — his decision, 2026-08-27**, after shipping it off by default so the choice
+    was his to make. The distinction that makes this consistent with the rest of the
+    project: her brain, her memory and every piece of processing stay on this machine,
+    always. What this adds is an outbound GET for public feeds — the internet as a
+    connection, not as a place she lives. Nothing of his is sent, and nothing about
+    her runs anywhere else.
     """
-    enabled: bool = False
+    enabled: bool = True
     # name -> feed url. RSS or Atom only; see feeds.py for why not web pages.
     sources: tuple[tuple[str, str], ...] = (
         ("hacker news", "https://news.ycombinator.com/rss"),

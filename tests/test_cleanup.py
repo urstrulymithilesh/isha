@@ -6,6 +6,8 @@ where the same sentence without it extracts correctly. Every turn was handing th
 extractor a poisoned string.
 """
 
+import pytest
+
 from isha.stt.cleanup import strip_wake_prefix
 
 WAKE = "hey_jarvis"
@@ -55,3 +57,34 @@ def test_digits_and_odd_filler_without_a_wake_token_are_untouched():
     assert strip_wake_prefix("8 times 8 is 64", "hey_jarvis") == "8 times 8 is 64"
     assert strip_wake_prefix("They said hi to me", "hey_jarvis") == "They said hi to me"
     assert strip_wake_prefix("A dog barked", "hey_jarvis") == "A dog barked"
+
+
+@pytest.mark.parametrize("heard", [
+    "Stay Jarvis Open Photoshop",
+    "Meet Jarvis.  Open Photoshop.",
+    "8 Jarvis Open Photoshop",
+    "Grey Jarvis Open Photoshop",
+])
+def test_any_single_mangled_word_before_the_wake_token_is_stripped(heard):
+    """The list of things whisper makes of "hey" has no end — 8 / A / They / Stay /
+    Meet all seen live, each silently breaking downstream parsing. One unrecognised
+    short word is allowed ahead of a GENUINE wake token, which is what keeps ordinary
+    sentences safe."""
+    assert strip_wake_prefix(heard, "hey_jarvis").lower().startswith("open photoshop")
+
+
+@pytest.mark.parametrize("said", [
+    "A dog barked",
+    "They said hi to me",
+    "8 times 8 is 64",
+    "Stay where you are",
+    "hello world",
+])
+def test_without_a_wake_token_nothing_is_stripped(said):
+    assert strip_wake_prefix(said, "hey_jarvis") == said
+
+
+def test_two_unknown_words_are_not_swallowed():
+    """One mangled 'hey' is plausible; two is a sentence."""
+    assert strip_wake_prefix("Tell Sarah Jarvis is here", "hey_jarvis") == \
+        "Tell Sarah Jarvis is here"

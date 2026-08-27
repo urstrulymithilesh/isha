@@ -393,3 +393,35 @@ _Parallelization: mostly sequential (Phase 0 gates everything). Once interfaces 
 - **VERDICT:** ENG CLEARED — architecture locked, test strategy in-plan, no silent-failure critical gaps. Ready to implement (start with the Phase 0 plumbing + hardware spike).
 
 NO UNRESOLVED DECISIONS
+
+---
+
+## AMENDMENT — 2026-08-27: "offline" made precise
+
+This document repeatedly says **"fully offline"**, and that phrasing has since been
+clarified by the builder. It was never meant as "no packet ever leaves", and reading
+it that way now produces a false contradiction with two features that are wanted.
+
+**The line, stated properly:**
+
+> Isha's **brain, memory and processing are 100% local, always.** The model, the
+> transcription, the synthesis, the embeddings and the database run on this one
+> machine and nowhere else. No conversation, memory or audio is ever sent to a third
+> party. The network is used as a **connection, never as a place she lives.**
+
+What that permits, and what it still forbids:
+
+| | |
+|---|---|
+| **Allowed** — outbound RSS fetches for sources he chose (step 9, on since 2026-08-27) | sends nothing of his; runs nothing of her elsewhere |
+| **Allowed** — reaching this instance remotely from his own devices (step 10) | the audio travels; she does not |
+| **Still refused** — Twilio/VoIP, or any cloud STT/LLM/TTS | routes intimate audio or thinking through someone else's computer |
+
+The Twilio rejection recorded in the Eng Review above therefore **stands unchanged**.
+It was never rejected for using a network; it was rejected for putting a third party
+inside the conversation and for degrading the audio to 8 kHz. Remote access as
+designed in step 10 does neither.
+
+The `AudioTransport` interface was built for exactly this: the eng review noted a VoIP
+adapter could slot in behind it later. A remote client is that adapter, minus the
+third party.

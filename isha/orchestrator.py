@@ -72,6 +72,10 @@ _PAST_PATTERNS = (
 # Queue sentinel: generation has ended (distinct from any real sentence).
 _GENERATION_DONE = object()
 
+# A deterministic handler has already spoken and finished the turn; there is
+# nothing left for the model to say.
+_ANSWERED = object()
+
 
 def _asks_about_past(text: str) -> bool:
     t = text.lower()
@@ -175,6 +179,7 @@ class Orchestrator:
         episodes: EpisodeStore | None = None,
         corpus=None,
         digest=None,
+        auto_read_sources: bool | None = None,
         text_channel=None,
         summariser: Summariser | None = None,
         scheduler=None,
@@ -192,6 +197,13 @@ class Orchestrator:
         self.episodes = episodes        # None => no episodic memory
         self.corpus = corpus            # None => nothing learned from documents
         self.digest = digest            # None => she reads no sources
+        # Whether the background fetch loop runs. An explicit parameter rather
+        # than reading global config at start time: the smoke harness injects a
+        # digest store of its own and must never touch the network, and when
+        # this was implicit, enabling digests globally made the harness fetch
+        # live news mid-scenario and answer from it.
+        self.auto_read_sources = (CONFIG.digest.enabled
+                                  if auto_read_sources is None else auto_read_sources)
         self.text_channel = text_channel  # None => no UI attached
         self.summariser = summariser
         self.scheduler = scheduler      # None => timers/reminders disabled
@@ -251,7 +263,7 @@ class Orchestrator:
         # Reading her sources. Backgrounded and SILENT: unlike the scheduler, this
         # loop can never speak. Its first pass is the reconcile — a machine that was
         # closed through the interval fetches once on waking, not once per missed one.
-        if self.digest is not None and CONFIG.digest.enabled:
+        if self.digest is not None and self.auto_read_sources:
             self._digest_task = asyncio.create_task(self._read_sources_loop())
         async for frame in self.transport.capture():
             await self._handle_frame(frame)
@@ -513,7 +525,9 @@ class Orchestrator:
             # so "anything new?" is a digest question rather than a corpus search, and
             # recall mode for the usual reason: reciting a real list needs accuracy.
             if self.digest is not None:
-                digest_note = self._handle_digest_query(text)
+                digest_note = await self._handle_digest_query(text)
+                if digest_note is _ANSWERED:
+                    return          # she has already read the headlines out
                 if digest_note is not None:
                     extra.append(digest_note)
                     recall_mode = True
@@ -768,13 +782,37 @@ class Orchestrator:
         self.digest.set_last_fetch(datetime.now())
         return added
 
-    def _handle_digest_query(self, text: str) -> Message | None:
+    @staticmethod
+    def _phrase_digest(items) -> str:
+        """Read the headlines out, deterministically.
+
+        Her own words were tried first and lost on the one thing that matters: asked
+        "anything new?" with items waiting she said "nothing new" in roughly 1 run in
+        6-12 — a false statement about what she has, and the same class as the
+        unknown-app refusal that dropped its negation. Strengthening the note did not
+        remove it. Headlines are a record being recited, and this project has decided
+        twice already that reciting a record wants accuracy over register.
+
+        The empty case stays in her voice: "nothing came in" measured 6/6 honest,
+        because agreeing there is nothing is the easy direction.
+        """
+        lead = "One thing came in." if len(items) == 1 else f"{len(items)} things came in."
+        parts = []
+        for item in items:
+            line = item.title.rstrip(".")
+            parts.append(f"From {item.source}, {line}." if item.source else f"{line}.")
+        return " ".join([lead, *parts])
+
+    async def _handle_digest_query(self, text: str) -> Message | None:
         """"Anything new?" — answered from the table, or honestly not at all.
 
         Deterministic trigger for the usual reason, plus one specific to this: the
         answer is a list of things from outside the machine, and a model asked to
         decide *whether* to volunteer them would sometimes volunteer them into a
         conversation about something else entirely.
+
+        Returns a system note for the EMPTY case (her voice, measured honest), and
+        speaks the items directly when there are any — see `_phrase_digest`.
         """
         query = asks_whats_new(text, [name for name, _ in CONFIG.digest.sources])
         if query is None:
@@ -786,7 +824,15 @@ class Orchestrator:
               + (f" (from {query.source})" if query.source else ""))
         self.digest.mark_told(i.id for i in items)
         self._nudged = True          # he has just been told; no nudge on top of it
-        return digest_context(items, source_label=query.source)
+        if not items:
+            return digest_context(items, source_label=query.source)
+        spoken = self._phrase_digest(items)
+        await self._speak(spoken)
+        if self.text_channel is not None:
+            self.text_channel.log("isha", spoken)
+        self._history.append(Message("assistant", spoken))
+        self._remember_turn(text, spoken)
+        return _ANSWERED
 
     def _digest_nudge(self) -> Message | None:
         """Opt-in, once a session, and only ever riding on a reply he asked for.
