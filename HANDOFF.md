@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `51b3189`. 399 tests, 64 commits, 87 files, ~11.2k lines of
+Last updated at commit `f7a57ac`. 401 tests, 66 commits, 87 files, ~11.3k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -211,6 +211,21 @@ socket. On top of that every request carries a 256-bit token (`data/remote-token
 typed into the phone once), compared with `secrets.compare_digest`, with a five-strike
 per-address lockout. The bind is `0.0.0.0` — which is exactly why the token is not
 optional.
+
+**Tailscale is installed and signed in** (1.102.3, machine `jarvis`,
+`100.72.53.24`, MagicDNS `jarvis.tail9c1562.ts.net`). Auth verified over the real
+tailnet interface, not localhost: no token 401, bad token 401, real token 200.
+
+**BLOCKED ON ONE TOGGLE:** `tailscale serve` cannot get a certificate until HTTPS is
+enabled for the tailnet — `tailscale cert` returns *"your Tailscale account does not
+support getting TLS certs"*. It is a one-time switch in the admin console under
+DNS -> HTTPS Certificates. Until then the page loads over `http://100.72.53.24:8766`
+but the browser will not give it the microphone.
+
+**When the connection drops**, the page says so — "can't reach her — 12s (retrying)" —
+and backs off to a 2s poll. Both the polling loop and the audio upload report
+reachability. Before that it caught the error and retried silently, so a sleeping
+machine and a working one looked identical from the phone.
 
 **The mic needs https.** Browsers refuse `getUserMedia` on an insecure origin, so a
 plain `http://100.x.x.x` page cannot record at all. `tailscale serve https /
@@ -918,8 +933,14 @@ her a new app without editing `config.py`.
   it would work — but a browser cannot reliably tell whether headphones are plugged
   in, so it always mutes rather than guessing.
 - **The remote page has not been driven from a real phone yet.** The whole pipeline is
-  covered by the `remote` smoke scenario over real HTTP, but `getUserMedia`,
-  AudioWorklet and iOS playback have only been reasoned about, not run on a handset.
+  covered by the `remote` smoke scenario over real HTTP and auth is verified over the
+  tailnet, but `getUserMedia`, AudioWorklet and iOS playback have only been reasoned
+  about, not run on a handset — and cannot be until the HTTPS toggle above is flipped.
+- **Continuous listening was kept over push-to-talk** (his call, 2026-08-28). The
+  argument for push-to-talk was cost — dependencies, a new concurrency model — and
+  none of it materialised. The one real remaining risk is the wake word firing on
+  phone-mic audio, which the live test will settle; if it struggles, push-to-talk is
+  roughly twenty lines on the same plumbing.
 - ~~She under-reports occasionally.~~ **Fixed** — the headlines are read out
   deterministically now, because "nothing new" when something had come in is a false
   claim about state, the same class as the unknown-app refusal that dropped its
