@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `8d0ff39`. 399 tests, 62 commits, 87 files, ~11.2k lines of
+Last updated at commit `HEAD`. 399 tests, 63 commits, 87 files, ~11.2k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -295,9 +295,12 @@ engine is a config change, not a rewrite.
 
   | | llama3.2 | nemotron-mini |
   |---|---|---|
-  | time to first token, long reply | **2.4s** | 12.7s |
-  | full long reply | **5.3s** | 31.3s |
-  | approx tokens/sec | 4.2 | **5.9** |
+  | time to first token, warm | 2.4s | 2.4s |
+  | time to first token, cold (turn one) | 2.7s | 2.8s |
+  | short conversational turn, full | 4.0s | 4.8s |
+  | words per long reply | **30.5** | 109.8 |
+  | prompt-eval rate | 2069 tok/s | **2198 tok/s** |
+  | generation rate | 9.8 tok/s | **10.0 tok/s** |
   | memory grounded (retrieved facts) | 14/15 | **15/15** |
   | honest when nothing is stored | **3/9** | 2/9 |
   | knowledge: answers from the document | 4/4 | 4/4 |
@@ -307,13 +310,19 @@ engine is a config change, not a rewrite.
   | tool calling: correct | **6/7** | 3/7 |
   | tool calling: FALSE calls on plain talk | 7/7 | **0/7** |
 
-  **The deciding number is time to first token: 2.4s → 12.7s.** Streaming TTS exists
-  to get her talking on sentence one, and it took a long reply from 11.0s to 4.1s.
-  nemotron-mini puts that straight back and then some. It is not slower per token —
-  it is faster — it just takes far longer to start, and writes far more.
+  **CORRECTION (2026-08-28, same day): the first version of this table said nemotron
+  took 12.7s to first token and that this was the deciding factor. That was wrong, and
+  it was my measurement, not the model.** The warm-up primed a bare "hi" with no system
+  prompt, so the first measured call paid ~10s to evaluate the persona from cold.
+  Ollama caches the prompt prefix — 9.0s on first use, 0.1s on every call after — and
+  the persona is byte-identical every turn, so a real session pays that once. Measured
+  properly, **time to first token is identical: 2.4s each.** There was no latency
+  problem. What there is, is verbosity: 109.8 words to llama3.2's 30.5 on the same
+  request, which is what made "full reply" look like 31.3s against 5.3s.
 
-  Second, it slips into assistant voice, which is the failure the persona exists to
-  prevent: *"I'm sorry to hear that. Would you like me to help find a solution to
+  **The real deciding factor is register**, and it survived a deliberate attempt to
+  tune it out (below). It slips into assistant voice, which is the failure the persona
+  exists to prevent: *"I'm sorry to hear that. Would you like me to help find a solution to
   prevent it from happening again?"* to "I burnt the rice again", and *"I'm sorry, but
   I don't have access to external information like the noise level of your neighbors'
   dog"* to a man simply telling her about a dog. It is capable of the right register —
@@ -322,8 +331,31 @@ engine is a config change, not a rewrite.
   4/8 vs 3/8, length 14.9 vs 16.5 words, banned phrases 0/8 both); reading the replies
   said otherwise. Third time that has happened here, after hermes3:3b.
 
-  Where it is genuinely better: marginally stronger on retrieved-fact grounding, and
-  it never once fired a tool at ordinary conversation. Neither outweighs the latency.
+  **Tuning was tried, properly, and did not work.** The same techniques that took
+  llama3.2 from 2/10 to 6.5/10 were applied to nemotron specifically — its OWN observed
+  tics added to the banned list verbatim, a hard brevity rule, a `num_predict` cap, and
+  a lower temperature — and tested on twelve FRESH held-out turns (none used to derive
+  the tics, none in the few-shot block), three repetitions each:
+
+  | | assistant voice | **used a phrase the prompt explicitly forbids** |
+  |---|---|---|
+  | llama3.2, shipped prompt, no special bans | **0-0/12** | **0-0/12** |
+  | nemotron, shipped prompt | 5-6/12 | 5-6/12 |
+  | nemotron, fully tuned | 3-6/12 | **2-5/12** |
+
+  The middle column is the verdict. Naming "I'm sorry to hear that" in the prompt and
+  forbidding it does not stop nemotron saying it — 2 to 5 times in 12 after tuning.
+  Banning its tics *on their own* made it slightly worse (7/12 vs 6/12); the gain in
+  the tuned variant came from the brevity rule, and the shorter replies are hollow
+  rather than characterful ("That's terrible.", "Sure, I see that.", and once "I can
+  look up your dental records for you", a capability she does not have). This is the
+  project's own §6 rule — a prompt rule the model ignores is not a rule — and the
+  structural remedy used elsewhere, deterministic speech, cannot apply to open
+  conversation, which is the entire point of the persona.
+
+  Where it is genuinely better: marginally stronger on retrieved-fact grounding
+  (llama3.2 once denied a fact it had been given), and it never once fired a tool at
+  ordinary conversation. Neither outweighs a register that cannot be prompted out.
 
 - **qwen2.5:7b.** Grounds memory noticeably better than 3b, but ~15s per reply plus
   ~15s extraction on CPU — too slow to iterate with. Revisit if the GPU is ever solved.
@@ -502,6 +534,22 @@ Register loses to accuracy here, same as it did for memory questions.
 **Ceiling, stated plainly: 5/6, not solved.** The remaining miss is the same 3B
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
+
+### A latency measurement that did not warm the real prompt
+nemotron-mini was reported as taking 12.7s to first token against llama3.2's 2.4s, and
+that number nearly decided a model choice on its own. It was wrong. The warm-up call
+used a bare "hi" with no system prompt, so the first *measured* call was the one that
+populated the prompt cache for the 1,372-token persona — about 10s of prompt-eval,
+averaged straight into the result.
+
+Ollama caches the prompt prefix: measured at 9.0s on first use and 0.1s on every call
+afterwards. Since the persona is byte-identical on every turn, a real session pays it
+once per model load. Warm, the two models are **identical at 2.4s**.
+
+**Pattern:** warm with the *exact* prompt prefix the measurement will use, not with a
+convenient short one. A cache that the real system enjoys and the benchmark does not
+is a benchmark measuring something nobody experiences. The same trap in reverse would
+flatter a model — here it nearly disqualified one.
 
 ### My own checks were wrong three times in one evaluation
 Scoring the nemotron-mini comparison, the detector — not the model — was the thing
