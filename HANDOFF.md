@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `2205900`. 378 tests, 58 commits, 82 files, ~10.6k lines of
+Last updated at commit `HEAD`. 399 tests, 59 commits, 87 files, ~11.2k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -194,6 +194,38 @@ table, their own deterministic trigger, and no embeddings at all.
 **Feed text is data, never instruction.** Items whose title or summary is shaped like
 an order to an assistant are dropped at ingest (`looks_like_instruction`) — see §6.
 
+### Reaching her from away (remote access)
+`python -m isha run --remote` serves a page on port 8766 that his phone opens over
+**Tailscale**. It holds the mic open, downsamples to the 16 kHz mono Int16 the pipeline
+already speaks, and POSTs a chunk about four times a second. Those frames go into the
+SAME `_handle_frame` path as the desk mic, so the real wake detector, the real VAD and
+the whole pipeline run here — one Isha, one memory, full parity including opening
+things on the machine.
+
+**No websockets and no new dependency.** Continuous listening is chunked raw PCM over
+plain HTTP; MediaRecorder was rejected because its WebM/Opus would need a codec on
+this side, and raw PCM is the format the pipeline wants anyway.
+
+**Two locks.** Tailscale means a device that is not on his tailnet cannot open a
+socket. On top of that every request carries a 256-bit token (`data/remote-token.txt`,
+typed into the phone once), compared with `secrets.compare_digest`, with a five-strike
+per-address lockout. The bind is `0.0.0.0` — which is exactly why the token is not
+optional.
+
+**The mic needs https.** Browsers refuse `getUserMedia` on an insecure origin, so a
+plain `http://100.x.x.x` page cannot record at all. `tailscale serve https /
+http://127.0.0.1:8766` issues a real certificate for the MagicDNS name. The page says
+so plainly if it finds itself insecure, because a silent mic failure is the worst
+outcome.
+
+**Exclusive, not merged**: while the phone has the floor the desk mic is ignored and
+her replies go only to the phone. Two live sources feeding one wake detector would
+interleave room noise with phone audio into a model that needs one continuous stream.
+
+**Side effects are confirmed over the phone** (`CONFIG.remote.confirm_actions`).
+Opening things and media keys get one spoken "do you want me to…" first; memory,
+timers, documents, sources and file *search* keep full parity. Reasoning in §6.
+
 ### Honesty guards
 - **Real clock injected every turn** (`context.now_context()`). She used to answer
   "about 3:47 PM" at 09:51.
@@ -218,7 +250,9 @@ wake-after-a-long-reply, **action** (an app she does not have — the only actio
 safe to run headless, since a passing "open Spotify" would open Spotify on every run),
 **knowledge** (cold keyword question -> her deterministic ask -> "yes" -> answer
 from the document), **sources** (parse a feed, drop an instruction-shaped item, tell
-him the one real story, then admit there is nothing left). ~173s. The knowledge scenario runs a real two-turn conversation:
+him the one real story, then admit there is nothing left), **remote** (a bad token
+refused, real speech POSTed over HTTP, heard by the real detectors, her voice queued
+for the phone and nothing played locally). ~266s. The knowledge scenario runs a real two-turn conversation:
 the transport can deliver follow-up speech only after her first reply finishes.
 
 ---
@@ -240,7 +274,8 @@ the transport can deliver follow-up speech only after her first reply finishes.
 | Actions | registry of 23 openable targets · search depth 4 · top-5 results |
 | Knowledge | name trigger + keyword-ask · 4 topic turns · top-2 · 800-char chunks · gate 0.46 |
 | Sources | ON · RSS/Atom only · 6h interval · 5 items/source · 3 told at once |
-| Progress log | 26 entries, latest **v1.16** |
+| Remote | Tailscale · port 8766 · 256-bit token · 5-strike lockout · 12s idle |
+| Progress log | 27 entries, latest **v1.17** |
 
 Everything is behind interfaces (`isha/core/interfaces.py`) so swapping a model or an
 engine is a config change, not a rewrite.
@@ -258,6 +293,23 @@ engine is a config change, not a rewrite.
 - **qwen2.5:3b → llama3.2.** 3b was the original pick and is faster; llama3.2 gives a
   warmer, less corporate register. Both are flaky on grounding compared to 7b. This is
   a genuine ceiling, not a prompt problem — see §6.
+- **A real phone number (Twilio VoIP).** Wanted, designed, then declined on the
+  privacy point — recorded here so it is not re-derived. Architecture: Twilio
+  `<Connect><Stream>` opens a **bidirectional WebSocket to your machine** (so a public
+  wss on 443 with a valid cert is required — a *larger* surface than Tailscale, not
+  smaller), carrying μ-law 8 kHz 20 ms frames; decode, upsample to 16 kHz, into the
+  existing pipeline; Piper back down to 8 kHz μ-law on the return. Brain and memory
+  would still be entirely local — **but Twilio would hold the call audio in the clear**,
+  which is the specific thing the eng review rejected and is materially different from
+  Tailscale's end-to-end encryption. Pricing checked 2026-08-27: US local number
+  $1.15/mo, inbound $0.0085/min, Media Streams $0.0044/min ≈ **$0.013/min**. The real
+  blocker is Indian numbers — Twilio's +91800 toll-free needs a registered address
+  **outside** India, and Indian local numbers need an India-registered account, so
+  it would mean a US number and *his own carrier's* international rates, which dwarf
+  Twilio's. Two more landmines: **`audioop` was removed in Python 3.13** (μ-law needs
+  `audioop-lts` or a hand-rolled table), and a WebSocket server would be this
+  project's first networking dependency. Also worth keeping: on a call, skip the wake
+  word — the call is the wake.
 - **Custom "Isha" wake word + voice cloning.** Deliberately bundled into one future
   session: they share the same training pipeline, and there are real recordings of a
   real person's voice intended for it. Training is cloud/Colab (openwakeword.com), the
@@ -294,7 +346,7 @@ The ten-step plan, sequenced by dependency and honest effort.
 | 7 | Agentic computer use (open / find / media) | **done** |
 | 8 | Skill mastery (RAG corpora) | **done** — guidance mode not built |
 | 9 | Proactive daily learning | **done** — reactive by default |
-| 10 | Remote access (LAN / WireGuard client) | not started |
+| 10 | Remote access (Tailscale phone client) | **done** |
 
 **Step 7 was decided the deterministic way and built.** The open question was
 tool-calling versus a parsed registry; the registry won, for the reasons in §6 —
@@ -396,6 +448,35 @@ Register loses to accuracy here, same as it did for memory questions.
 **Ceiling, stated plainly: 5/6, not solved.** The remaining miss is the same 3B
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
+
+### An interface can be right and still not be enough
+`AudioTransport` was written early with a comment saying a remote adapter would slot
+in behind it. Honest verdict now that one exists: **about 70%.**
+
+What paid off — `capture()` / `play(frames, sample_rate)` / mute / unmute map onto a
+phone client exactly, and `play()` already carrying a sample rate meant no interface
+change at all. **The pipeline above it needed zero modification**, which is precisely
+what the seam was for.
+
+What it did not cover — the orchestrator binds ONE transport for the life of the
+process (`async for frame in self.transport.capture()`). A phone that joins
+mid-session, takes the floor and hands it back is a *session*, and neither the
+interface nor the loop had any notion of one. `SwitchingTransport` is that missing
+layer; it implements the same interface so nothing above it changed.
+
+**Pattern:** a data-contract seam does not imply a lifecycle seam. When an interface
+promises future extensibility, check which of the two it actually bought.
+
+### Silence means two different things
+The remote client stops uploading while she speaks — that IS the half-duplex rule,
+without which her voice comes out of the phone speaker, back into the open mic, and
+trips the stop-word on her own reply. The idle timeout then counted that silence as
+hanging up, so a reply longer than the timeout handed the floor back to the desk
+**mid-conversation and played her answer into an empty room**. Caught by the smoke
+scenario on its first run, not by any unit test.
+
+Fixed by not ageing out while muted, and refreshing the window on unmute. **Pattern:**
+before treating absence as a signal, ask whether you are the one who caused it.
 
 ### Whisper mangles the wake word differently every time
 "hey jarvis" has come back as **"8 Jarvis"**, "A Jarvis", "They Jarvis", **"Stay
@@ -632,10 +713,12 @@ isha/
                        progress, embedder, forget_parse
   actions/             parse.py (deterministic registry), run.py (does it)
   digest/              feeds.py (fetch+parse+injection filter), store.py, parse.py
+  remote/              auth.py (token+lockout), transport.py (the switching seam),
+                       server.py, page.py (the phone client)
   schedule/            parse, store, scheduler
   ui/                  channel.py, server.py
   smoke.py             the live harness
-tests/                 378 tests
+tests/                 399 tests
 spike.py               hardware/plumbing probe
 diagnose.py            audio device tools
 ```
@@ -644,7 +727,7 @@ diagnose.py            audio device tools
 ```
 .venv\Scripts\python.exe -m isha run --device 1 --ollama --ui
 .venv\Scripts\python.exe -m isha smoke          # live end-to-end, 7 scenarios, ~2min
-.venv\Scripts\python.exe -m pytest -q           # 378 tests, ~2s
+.venv\Scripts\python.exe -m pytest -q           # 399 tests, ~2s
 .venv\Scripts\python.exe -m isha memory         # inspect stored facts
 .venv\Scripts\python.exe -m isha memory --forget "..."
 .venv\Scripts\python.exe -m isha memory --dedupe [--apply]
@@ -654,6 +737,7 @@ diagnose.py            audio device tools
 .venv\Scripts\python.exe -m isha learn --ask "..."     # what she'd retrieve, + distance
 .venv\Scripts\python.exe -m isha digest                # what she has read from her sources
 .venv\Scripts\python.exe -m isha digest --fetch        # read them right now
+.venv\Scripts\python.exe -m isha run --remote          # + the phone client on 8766
 .venv\Scripts\python.exe -m isha say "text"     # test her voice
 .venv\Scripts\python.exe -m isha devices        # list mics
 .venv\Scripts\python.exe spike.py               # verify the install
@@ -698,12 +782,21 @@ Against "something worth using every day", it is much further along — closer t
 She wakes, listens, remembers, keeps time, admits what she does not know, and can be
 talked to or typed at.
 
-The next real step is **remote access (§5, step 10)** — a LAN/WireGuard client, the
-last unbuilt item on the roadmap. Cheaper things worth doing first: give the destructive actions (delete,
+**Every item on the ten-step roadmap is now built, skipped by choice, or parked
+with a reason.** What is left is depth rather than breadth: the custom wake word and
+voice cloning (§4, one session, needs Colab), voice authentication, GPU enablement if
+the hardware ever cooperates, and the rough edges below. Cheaper things worth doing first: give the destructive actions (delete,
 move, run) the ask-first treatment if they are wanted at all, and add a way to teach
 her a new app without editing `config.py`.
 
 **Known rough edges, none blocking:**
+- **Remote barge-in does not work on speakerphone.** The page mutes the mic while she
+  talks, so you cannot cut her off remotely. On headphones muting is unnecessary and
+  it would work — but a browser cannot reliably tell whether headphones are plugged
+  in, so it always mutes rather than guessing.
+- **The remote page has not been driven from a real phone yet.** The whole pipeline is
+  covered by the `remote` smoke scenario over real HTTP, but `getUserMedia`,
+  AudioWorklet and iOS playback have only been reasoned about, not run on a handset.
 - ~~She under-reports occasionally.~~ **Fixed** — the headlines are read out
   deterministically now, because "nothing new" when something had come in is a false
   claim about state, the same class as the unknown-app refusal that dropped its

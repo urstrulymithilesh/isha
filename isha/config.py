@@ -124,6 +124,29 @@ class ScheduleConfig:
 
 
 @dataclass(frozen=True)
+class RemoteConfig:
+    """Reaching her from his phone, over his own tailnet. `isha run --remote`.
+
+    Off unless asked for on the command line: this is the one server that binds wider
+    than localhost, so it should never start by accident.
+    """
+    port: int = 8766
+    # 0.0.0.0 so the phone can reach it over Tailscale. That is precisely why the
+    # token is mandatory rather than optional — see remote/auth.py.
+    host: str = "0.0.0.0"
+    token_path: Path = DATA_DIR / "remote-token.txt"
+    # A phone that stops sending for this long has hung up; the desk mic takes over.
+    # Long enough to survive a tunnel hiccup, short enough that a pocketed phone does
+    # not hold the floor.
+    idle_timeout_seconds: float = 12.0
+    # Side-effect actions (opening things, media keys) asked for from the phone get a
+    # confirmation first. Reading, remembering and timers are unaffected. Reasoning in
+    # HANDOFF: a remote channel is the least-tested one, and the same deterministic
+    # parsers are reading a transcript from a phone mic in a moving car.
+    confirm_actions: bool = True
+
+
+@dataclass(frozen=True)
 class DigestConfig:
     """Sources she reads on a schedule. See isha/digest/feeds.py for the safety notes.
 
@@ -235,6 +258,7 @@ class Config:
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     digest: DigestConfig = field(default_factory=DigestConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
 
 
 CONFIG = Config()

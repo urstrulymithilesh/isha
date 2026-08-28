@@ -72,6 +72,13 @@ Working end to end, on-device:
   you what actually came in, or says nothing has. This is the only part of Isha that
   touches the network, which is why it ships switched off.
 
+- **Reaching her from away** — `python -m isha run --remote` serves a page your phone
+  opens over [Tailscale](https://tailscale.com). It listens continuously, and the audio
+  goes into the same pipeline as the desk microphone: same memory, same personality,
+  same ability to open things on your computer. Two locks — only devices on your
+  tailnet can reach it, and every request carries a token. Side-effect actions ask for
+  confirmation when you're away.
+
 Deferred: GPU acceleration (Ollama's Vulkan discovery times out on this GTX 1050, so
 the LLM runs ~12 tok/s on CPU), a custom wake word, and voice cloning.
 
@@ -107,7 +114,25 @@ python -m isha run --ollama          # add --device N to pick a specific mic
 ```
 
 Useful extras: `python -m isha memory` (inspect what she remembers),
-`python -m isha devices` (list mics), `python -m isha say "text"` (test her voice).
+`python -m isha devices` (list mics), `python -m isha say "text"` (test her voice),
+`python -m isha digest` (what she has read from your sources).
+
+To reach her from your phone:
+
+```bash
+python -m isha run --ollama --remote
+```
+
+That prints a link and a token. The browser will only give a page the microphone over
+https, so serve it with a real certificate:
+
+```bash
+tailscale serve https / http://127.0.0.1:8766
+```
+
+Then open the MagicDNS name on your phone, paste the token once, and press *start
+listening*. Headphones are worth it — on speakerphone the page has to mute your mic
+while she talks, so you can't interrupt her.
 
 ## Verify your setup (the spike)
 
@@ -126,8 +151,8 @@ Green = go. A red probe (e.g. sqlite-vec won't load) blocks app code.
 Two layers, deliberately:
 
 ```bash
-.venv\Scripts\python.exe -m pytest        # 365 unit tests with fakes, ~2 seconds
-.venv\Scripts\python.exe -m isha smoke    # 8 scenarios on the REAL stack, ~3 minutes
+.venv\Scripts\python.exe -m pytest        # 399 unit tests with fakes, ~2 seconds
+.venv\Scripts\python.exe -m isha smoke    # 9 scenarios on the REAL stack, ~4 minutes
 ```
 
 (If you have run `.venv\Scriptsctivate`, plain `pytest` and `python -m isha smoke`
@@ -146,8 +171,9 @@ Piper as a mouth feeding the pipeline's ears — so it needs no microphone, no s
 and no human. It covers a conversation turn, memory stored and recalled across a new
 connection, a spoken timer firing, barge-in, the wake word still working after a long
 reply, an app she does not have being admitted rather than agreed to, a document being
-ingested and answered from, and a feed being read and reported honestly. Each scenario
-uses a temporary database; your real memory is untouched.
+ingested and answered from, a feed being read and reported honestly, and a phone
+joining over HTTP and getting her voice back. Each scenario uses a temporary database;
+your real memory is untouched.
 
 Run the unit tests constantly; run the smoke test after anything that touches audio,
 threading, or the model boundary.
@@ -165,8 +191,9 @@ gitignored, and no conversation, memory or audio is ever sent anywhere.
 - **Reading your sources** (`CONFIG.digest.enabled`, on) — plain GETs for the public
   RSS feeds you list. Outbound only, and they carry no conversation, no memory and no
   identifier beyond a user agent.
-- **Remote access** (planned) — reaching *your* Isha, running on *your* computer, from
-  your own devices. The audio travels; she does not.
+- **Remote access** (`--remote`) — reaching *your* Isha, running on *your* computer,
+  from your own devices over Tailscale. The audio travels inside a WireGuard tunnel
+  between two machines you own; she does not travel at all.
 
 Neither is a cloud service, and neither moves any part of her off this machine. If
 that ever changes, this section is the thing to correct first.

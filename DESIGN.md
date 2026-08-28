@@ -425,3 +425,38 @@ designed in step 10 does neither.
 The `AudioTransport` interface was built for exactly this: the eng review noted a VoIP
 adapter could slot in behind it later. A remote client is that adapter, minus the
 third party.
+
+---
+
+## AMENDMENT — 2026-08-27: remote access, and the VoIP question re-opened then closed
+
+Step 10 shipped as a **Tailscale phone client**, not VoIP. The route there is worth
+recording, because the rejected option was reconsidered on its merits and declined
+again for a sharper reason than the first time.
+
+**What was built.** A page served from this machine, opened on his phone over
+Tailscale, holding the mic open and posting raw 16 kHz PCM back to the same pipeline
+the desk microphone feeds. Two locks: the tailnet, and a 256-bit token with a lockout.
+Audio travels end-to-end encrypted between two devices he owns; nothing else moves.
+
+**Twilio was designed in full and declined.** Real pricing (2026-08-27): a US local
+number is $1.15/month, inbound $0.0085/min, Media Streams $0.0044/min — about
+$0.013/min. Indian numbers are effectively unavailable to him: the +91800 toll-free
+product requires a registered address *outside* India, and Indian local numbers require
+an India-registered account. The deciding factor was not cost. It was that **Twilio
+terminates the PSTN leg and therefore holds the call audio in the clear**, which is
+categorically different from a provider that only ever sees ciphertext.
+
+That sharpens, rather than contradicts, the "network as a connection, not a home"
+amendment above. Tailscale is a wire. A VoIP carrier is a participant.
+
+**The original rejection therefore stands, on a better-stated reason.** The eng review
+rejected VoIP for "routing intimate audio through a third party"; that is exactly what
+it would still do. The full architecture, pricing and landmines are preserved in
+HANDOFF §4 so a future session inherits the analysis instead of repeating it.
+
+**On the `AudioTransport` seam.** It was written to make this a drop-in. It got about
+70% of the way: the data contract needed no change at all, but the orchestrator binds
+one transport for the process lifetime, and a session that joins and leaves needed a
+switching layer above the interface. Recorded in HANDOFF §6 as a lesson about the
+difference between a data-contract seam and a lifecycle seam.

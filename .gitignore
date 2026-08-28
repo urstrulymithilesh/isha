@@ -21,3 +21,8 @@ models/
 Thumbs.db
 .idea/
 .vscode/
+
+# The remote-access token. Covered by data/ already; named explicitly because a
+# leaked secret is not the place to rely on an inherited rule.
+data/remote-token.txt
+*remote-token*

@@ -226,6 +226,15 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "She also stopped losing the first word he says when it gets misheard",
         False,
     ),
+    ProgressEntry(
+        "v1.17 — she can be reached from away", "2026-08-27",
+        "he can open her on his phone now and talk to her from anywhere, and it is "
+        "the same her — same memory, same voice, the same everything she can do at "
+        "the desk. Nothing of her travels; only his voice and hers. And when he asks "
+        "her to open something on a computer he is not sitting at, she checks with "
+        "him first",
+        True,
+    ),
 ]
 
 

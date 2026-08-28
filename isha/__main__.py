@@ -27,6 +27,7 @@ def _status() -> int:
     print("Commands:  python -m isha run     (live loop)")
     print("           python -m isha smoke   (live end-to-end check, ~1-3 min)")
     print("           python -m isha run --ui  (adds the text UI at 127.0.0.1:8765)")
+    print("           python -m isha run --remote  (adds the phone client, port 8766)")
     print("           python spike.py        (prove the hardware)")
     return 0
 
@@ -382,6 +383,26 @@ def _run(argv: list[str]) -> int:
         use_ollama="--ollama" in argv, input_device=device, text_channel=channel,
     )
 
+    # Remote: his phone, over his own tailnet. Wraps the desk transport rather than
+    # replacing it, so the orchestrator above is untouched (see remote/transport.py).
+    remote_url = None
+    if "--remote" in argv:
+        from isha.remote.auth import RemoteAuth, load_or_create
+        from isha.remote.server import start as start_remote
+        from isha.remote.transport import RemoteSource, SwitchingTransport
+
+        if channel is None:            # the phone shows the same transcript the UI does
+            from isha.ui.channel import TextChannel
+            channel = TextChannel()
+            orch.text_channel = channel
+        token = load_or_create(CONFIG.remote.token_path)
+        source = RemoteSource(idle_timeout=CONFIG.remote.idle_timeout_seconds)
+        orch.transport = SwitchingTransport(orch.transport, source)
+        remote_port = int(_flag_value(argv, "--remote-port") or CONFIG.remote.port)
+        start_remote(RemoteAuth(token), source, channel,
+                     host=CONFIG.remote.host, port=remote_port)
+        remote_url = f"http://<this machine>:{remote_port}/?t={token}"
+
     # Gain / threshold: an explicit --gain wins; else auto-calibrate (unless off).
     gain_override = _flag_value(argv, "--gain")
     eff_device = _effective_device(device)
@@ -411,6 +432,12 @@ def _run(argv: list[str]) -> int:
     print("   stop  : say the stop word while she's speaking to cut her off")
     if url:
         print(f"   ui    : {url}  (type there; it joins the same conversation)")
+    if remote_url:
+        print(f"   phone : {remote_url}")
+        print("           open that on your phone over Tailscale. The mic needs https,")
+        print("           so serve it with:  tailscale serve https / "
+              f"http://127.0.0.1:{remote_port}")
+        print(f"           token lives in {CONFIG.remote.token_path}")
     print("   Ctrl-C to quit.")
     print("=" * 60)
 

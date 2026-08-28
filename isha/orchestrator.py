@@ -237,6 +237,7 @@ class Orchestrator:
         self._scheduler_task: asyncio.Task[None] | None = None
         self._digest_task: asyncio.Task[None] | None = None
         self._nudged = False        # the new-arrivals mention is once per session
+        self._pending_action = None  # a side effect awaiting his yes, from the phone
         self._alerts: list[str] = []
         self._system_prompt = system_prompt
         self._history: list[Message] = []  # conversation turns only; persona + facts added per turn
@@ -739,6 +740,11 @@ class Orchestrator:
             self._extract_task = asyncio.create_task(
                 self._extract_facts(exchange, turn_ids=(uid, aid)))
 
+    @property
+    def remote_live(self) -> bool:
+        """True while his phone has the floor. False for anything at the desk."""
+        return bool(getattr(self.transport, "remote_live", False))
+
     async def _read_sources_loop(self) -> None:
         """Read her sources on a wall-clock interval. Silent, forever, best-effort.
 
@@ -868,6 +874,21 @@ class Orchestrator:
         turn that stalls mid-sentence looks like a crash.
         """
         cmd = parse_action_command(text, CONFIG.actions.apps)
+
+        # A confirmation she asked for a moment ago, answered. Resolved before
+        # anything else, because "yes" parses as no command at all.
+        confirmed = False
+        if self._pending_action is not None:
+            pending, self._pending_action = self._pending_action, None
+            if cmd is None and _is_short_affirmation(text):
+                cmd, confirmed = pending, True
+            # Anything else — a new command, or him moving on — lets it lapse. A
+            # request he did not confirm must decay, not wait around to be triggered
+            # by an unrelated "sure" three turns later.
+            elif cmd is None:
+                print(f"  [action] the pending {type(pending).__name__} was not "
+                      f"confirmed — dropped")
+
         if cmd is None:
             return None
 
@@ -885,6 +906,27 @@ class Orchestrator:
             self._history.append(Message("assistant", line))
             self._remember_turn(text, line)
             return ""      # sentinel: the turn is already answered, nothing for the LLM
+
+        # Over the phone, a side effect gets one confirmation first. Not nerves: the
+        # same deterministic parsers are reading a transcript from a phone mic, and
+        # whisper already mishears at the desk on clean audio ("Stay Jarvis", "Skit"
+        # for "skip", "Re-soon" for "resume"). Opening things on a machine he is not
+        # sitting at is the least reversible thing in this project. Reading,
+        # remembering, timers and file SEARCH are untouched — they are reversible or
+        # read-only, so they keep full parity.
+        if (not confirmed and self.remote_live and CONFIG.remote.confirm_actions
+                and isinstance(cmd, (OpenCommand, MediaCommand))):
+            what = (f"open {cmd.name}" if isinstance(cmd, OpenCommand)
+                    else f"press {cmd.action.replace('_', '/')}")
+            self._pending_action = cmd
+            line = f"You're away — do you want me to {what}?"
+            print(f"  [action] remote request to {what} — confirming first")
+            await self._speak(line)
+            if self.text_channel is not None:
+                self.text_channel.log("isha", line)
+            self._history.append(Message("assistant", line))
+            self._remember_turn(text, line)
+            return ""
 
         if isinstance(cmd, OpenCommand):
             try:

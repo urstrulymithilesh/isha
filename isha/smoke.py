@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import threading
 import time
 import traceback
 from collections.abc import AsyncIterator, Iterator
@@ -51,12 +52,19 @@ from isha.core.interfaces import Message
 from isha.core.state import ConversationState
 from isha.llm.ollama import OllamaLLM
 from isha.actions.parse import UnknownTarget, parse_action_command
+import urllib.error
+import urllib.request
+
 from isha.digest.feeds import parse_feed
 from isha.digest.store import DigestStore
 from isha.memory.corpus import CorpusStore, subjects_mentioned
 from isha.memory.embedder import FastEmbedEmbedder
 from isha.memory.extraction import FactExtractor
 from isha.memory.store import SqliteMemoryStore
+from isha.remote.auth import RemoteAuth, load_or_create
+from isha.remote.server import start as start_remote
+from isha.remote.transport import RemoteSource, SwitchingTransport
+from isha.ui.channel import TextChannel
 from isha.orchestrator import Orchestrator
 from isha.persona import SYSTEM_PROMPT
 from isha.schedule.scheduler import Scheduler
@@ -629,6 +637,97 @@ async def scenario_sources(mouth: Mouth, db: Path) -> Result:
             memory.close()
 
 
+async def scenario_remote(mouth: Mouth, db: Path) -> Result:
+    """His phone joins, speaks, and gets her reply back — through the real pipeline.
+
+    The phone's frames go in via the HTTP handler exactly as the page posts them, so
+    this covers the whole seam: token, chunked PCM, handover from the desk mic, the
+    real wake detector and VAD running on remote audio, and her reply routed to the
+    phone instead of the speakers.
+    """
+    checks = []
+    token = load_or_create(db.parent / "smoke-token.txt")
+    auth = RemoteAuth(token)
+    source = RemoteSource()
+    channel = TextChannel()
+    start_remote(auth, source, channel, host="127.0.0.1", port=8795)
+    base = "http://127.0.0.1:8795"
+
+    def post(path, data, tok):
+        req = urllib.request.Request(base + path, data=data, method="POST")
+        req.add_header("X-Isha-Token", tok)
+        req.add_header("Content-Type", "application/octet-stream")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    if post("/remote/audio", b"\x00\x00" * 160, "wrong-token") != 401:
+        return Result("remote", False, "a bad token was accepted", checks=checks)
+    checks.append("a bad token is refused by the real server")
+
+    # The phone posts the wake word and a question, exactly as the page would.
+    spoken = b"".join(mouth.frames("hey jarvis") + mouth.frames("say hello in five words"))
+    if post("/remote/audio", spoken, token) != 200:
+        return Result("remote", False, "the good token was refused", checks=checks)
+    checks.append(f"posted {len(spoken) // 2 / SAMPLE_RATE:.1f}s of speech over HTTP")
+
+    # The real page keeps posting while she thinks and goes quiet only while she
+    # speaks. Without that heartbeat this scenario is not a phone, it is one shout
+    # into a void — and the difference is exactly what the idle timeout reasons about.
+    beating = threading.Event()
+
+    def heartbeat():
+        while not beating.is_set():
+            if not source.muted:
+                post("/remote/audio", SILENCE * 4, token)
+            time.sleep(0.25)
+
+    threading.Thread(target=heartbeat, daemon=True).start()
+
+    local = ScriptedTransport([SILENCE] * 3000)
+    orch, store, _ = _build(local, db)
+    orch.transport = SwitchingTransport(local, source)
+    try:
+        await orch.run()
+        if orch.transport.frames_from_remote == 0:
+            return Result("remote", False, "no phone frames reached the pipeline",
+                          checks=checks)
+        checks.append(f"{orch.transport.frames_from_remote} frames came from the phone, "
+                      f"{orch.transport.frames_from_local} from the desk mic")
+
+        user_turns = [m for m in orch._history if m.role == "user"]
+        if not user_turns:
+            return Result("remote", False,
+                          "the real wake detector never fired on phone audio",
+                          checks=checks)
+        checks.append(f"whisper transcribed from the phone: {user_turns[0].content[:44]!r}")
+
+        replies = [m for m in orch._history if m.role == "assistant"]
+        if not replies:
+            return Result("remote", False, "she said nothing", checks=checks)
+        checks.append(f"she said: {replies[0].content[:56]!r}")
+
+        # Routed to the phone, not the speakers — he is not in the room.
+        if local.play_calls:
+            return Result("remote", False,
+                          "her reply played on the desk speakers while he was remote",
+                          checks=checks)
+        if source.pending_replies() == 0:
+            return Result("remote", False, "no audio was queued for the phone",
+                          checks=checks)
+        pcm, rate = source.take_reply()
+        checks.append(f"{len(pcm) // 2 / rate:.1f}s of reply audio queued for the phone "
+                      f"at {rate} Hz, nothing played locally")
+        return Result("remote", True,
+                      "phone joined, was heard, and got her voice back", checks=checks)
+    finally:
+        beating.set()
+        if store:
+            store.close()
+
+
 SCENARIOS = [
     ("conversation", scenario_conversation),
     ("memory", scenario_memory),
@@ -638,6 +737,7 @@ SCENARIOS = [
     ("action", scenario_action),
     ("knowledge", scenario_knowledge),
     ("sources", scenario_sources),
+    ("remote", scenario_remote),
 ]
 
 
