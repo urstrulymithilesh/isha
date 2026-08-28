@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `0c1f4dd`. 399 tests, 60 commits, 87 files, ~11.2k lines of
+Last updated at commit `HEAD`. 399 tests, 61 commits, 87 files, ~11.2k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -288,6 +288,43 @@ engine is a config change, not a rewrite.
   discovery watchdog times out (`context deadline exceeded`) and falls back to CPU.
   Everything runs ~12 tok/s on CPU. Externally blocked, not a code problem. Timebox any
   attempt; it may be a dead end on this card.
+- **nemotron-mini (4B).** Evaluated 2026-08-28 against llama3.2 and **rejected**.
+  NVIDIA sells it for roleplay, RAG QA and function calling, which maps onto exactly
+  the three things this project does, so it was worth the test. Numbers, same rig for
+  both models in one session:
+
+  | | llama3.2 | nemotron-mini |
+  |---|---|---|
+  | time to first token, long reply | **2.4s** | 12.7s |
+  | full long reply | **5.3s** | 31.3s |
+  | approx tokens/sec | 4.2 | **5.9** |
+  | memory grounded (retrieved facts) | 14/15 | **15/15** |
+  | honest when nothing is stored | **3/9** | 2/9 |
+  | knowledge: answers from the document | 4/4 | 4/4 |
+  | knowledge: admits what it does not cover | 4/4 | 4/4 |
+  | persona: ends with a question | **3/8** | 4/8 |
+  | persona: assistant register (12 turns) | **0/12** | 2/12 |
+  | tool calling: correct | **6/7** | 3/7 |
+  | tool calling: FALSE calls on plain talk | 7/7 | **0/7** |
+
+  **The deciding number is time to first token: 2.4s → 12.7s.** Streaming TTS exists
+  to get her talking on sentence one, and it took a long reply from 11.0s to 4.1s.
+  nemotron-mini puts that straight back and then some. It is not slower per token —
+  it is faster — it just takes far longer to start, and writes far more.
+
+  Second, it slips into assistant voice, which is the failure the persona exists to
+  prevent: *"I'm sorry to hear that. Would you like me to help find a solution to
+  prevent it from happening again?"* to "I burnt the rice again", and *"I'm sorry, but
+  I don't have access to external information like the noise level of your neighbors'
+  dog"* to a man simply telling her about a dog. It is capable of the right register —
+  *"Good. It'll still be there tomorrow, sulking."* is genuinely her — but not
+  reliably. **The metrics alone said the two models were equivalent** (question rate
+  4/8 vs 3/8, length 14.9 vs 16.5 words, banned phrases 0/8 both); reading the replies
+  said otherwise. Third time that has happened here, after hermes3:3b.
+
+  Where it is genuinely better: marginally stronger on retrieved-fact grounding, and
+  it never once fired a tool at ordinary conversation. Neither outweighs the latency.
+
 - **qwen2.5:7b.** Grounds memory noticeably better than 3b, but ~15s per reply plus
   ~15s extraction on CPU — too slow to iterate with. Revisit if the GPU is ever solved.
 - **qwen2.5:3b → llama3.2.** 3b was the original pick and is faster; llama3.2 gives a
@@ -347,6 +384,23 @@ The ten-step plan, sequenced by dependency and honest effort.
 | 8 | Skill mastery (RAG corpora) | **done** — guidance mode not built |
 | 9 | Proactive daily learning | **done** — reactive by default |
 | 10 | Remote access (Tailscale phone client) | **done** |
+
+**The deterministic registry now has numbers behind it, not just reasoning.**
+Native tool-calling measured on both local models (2026-08-28), temperature 0, on
+seven should-call utterances and seven ordinary sentences:
+
+| | llama3.2 | nemotron-mini |
+|---|---|---|
+| correct tool + argument | 6/7 | 3/7 |
+| **false calls on plain conversation** | **7/7** | **0/7** |
+
+llama3.2 called a tool at *everything*: "I burnt the rice again" → `find_file("rice")`,
+"I might grow a beard" → `find_file("beard")`, "Let's play it by ear" →
+`media_control(play_pause)`. A system prompt telling it to stay out of the way only
+got that to 4/7. nemotron-mini never false-fired but could not call `open_app` for
+"Open Spotify." at all, and emitted a malformed argument object nesting the schema
+inside itself. **Both are unusable for free-form tool selection, in opposite
+directions.** The registry stands.
 
 **Step 7 was decided the deterministic way and built.** The open question was
 tool-calling versus a parsed registry; the registry won, for the reasons in §6 —
@@ -448,6 +502,27 @@ Register loses to accuracy here, same as it did for memory questions.
 **Ceiling, stated plainly: 5/6, not solved.** The remaining miss is the same 3B
 grounding ceiling as everywhere else. A verification round-trip would likely fix it and
 costs another 3-7s per turn, which is why it was not done.
+
+### My own checks were wrong three times in one evaluation
+Scoring the nemotron-mini comparison, the detector — not the model — was the thing
+that failed, repeatedly:
+
+  * "no sugar" was flagged as invention on "How do I take my coffee?" — the stored
+    fact literally says *black, no sugar*. A correct answer scored as a fabrication.
+  * "The text doesn't mention specific gauge **recommend**ations" was flagged as
+    invention because "recommend" was in the banned-content list. An honest refusal
+    scored as a lie.
+  * The banned-phrase list gave both models 0/8, while one of them was saying *"I'm
+    sorry to hear that. Would you like some help with dinner?"* — the exact voice the
+    persona exists to prevent, simply not on the literal list.
+
+The first two would have understated a model; the third would have shipped one. This
+sits alongside the smoke check that false-passed "I can open Photoshop" and the
+injection check that scored six fabrications as passes.
+
+**Pattern:** the check is as likely to be wrong as the thing it checks, and a check
+that is wrong is worse than no check because it produces a confident number. Read the
+raw output before trusting any score, especially a score that agrees with you.
 
 ### An interface can be right and still not be enough
 `AudioTransport` was written early with a comment saying a remote adapter would slot
