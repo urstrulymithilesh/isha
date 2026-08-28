@@ -90,9 +90,35 @@ function paint(lines) {
   if (lines.length) log.scrollTop = log.scrollHeight;
 }
 
+// Connection state. A page that silently retries forever looks identical to a page
+// where nothing is wrong, so a machine that is asleep, an internet drop or a laptop
+// that closed mid-sentence all present as "she just isn't answering". Say it instead.
+let offlineSince = 0;
+
 function setDot() {
-  $('#dot').className = speaking ? 'speaking' : (listening ? 'listening' : '');
-  $('#status').textContent = speaking ? 'she is talking' : (listening ? 'listening' : 'idle');
+  const el = $('#dot'), st = $('#status');
+  if (offlineSince) {
+    el.className = '';
+    const secs = Math.round((Date.now() - offlineSince) / 1000);
+    st.textContent = "can't reach her — " + (secs < 60 ? secs + 's' : Math.round(secs / 60) + 'm')
+      + ' (retrying)';
+    st.style.color = '#b06a8f';
+    return;
+  }
+  st.style.color = '';
+  el.className = speaking ? 'speaking' : (listening ? 'listening' : '');
+  st.textContent = speaking ? 'she is talking' : (listening ? 'listening' : 'idle');
+}
+
+function reachable(ok) {
+  if (ok) {
+    if (offlineSince) { offlineSince = 0; setDot(); }
+  } else if (!offlineSince) {
+    offlineSince = Date.now();
+    setDot();
+  } else {
+    setDot();                       // keep the elapsed time ticking up
+  }
 }
 
 // --- her voice back ---------------------------------------------------------
@@ -123,8 +149,14 @@ async function poll() {
           await playReply(await a.arrayBuffer(), rate);
         }
       }
-    } catch (e) { /* a dropped poll is not worth stopping for */ }
-    await new Promise(r => setTimeout(r, speaking ? 120 : 400));
+      reachable(true);
+    } catch (e) {
+      // Machine asleep, home internet down, tunnel dropped, laptop lid closed
+      // mid-sentence — all the same from here, and all worth saying out loud.
+      reachable(false);
+    }
+    // Back off while unreachable so a phone in a pocket is not hammering a dead host.
+    await new Promise(r => setTimeout(r, offlineSince ? 2000 : (speaking ? 120 : 400)));
   }
 }
 
@@ -179,8 +211,11 @@ async function pump() {
     queue.length = 0;
     try {
       const r = await fetch('/remote/audio', { method: 'POST', headers: headers(), body: pcm.buffer });
-      if (r.status === 401) { $('#status').textContent = 'token rejected'; stop(); }
-    } catch (e) { /* keep listening; the next chunk will try again */ }
+      if (r.status === 401) { $('#status').textContent = 'token rejected'; stop(); return; }
+      reachable(true);
+    } catch (e) {
+      reachable(false);           // she is not hearing this; do not pretend otherwise
+    }
   }
 }
 

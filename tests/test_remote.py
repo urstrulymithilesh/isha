@@ -309,3 +309,30 @@ def test_unmuting_gives_the_phone_a_fresh_window():
     t.mute_input()
     t.unmute_input()
     assert source.active                              # judged from now, not from before
+
+
+# -- the page tells you when it cannot reach her -----------------------------
+
+
+def test_the_page_surfaces_a_lost_connection():
+    """A page that silently retries looks identical to one where nothing is wrong.
+    Machine asleep, home internet down, laptop lid closed mid-sentence — all the same
+    from the phone, and all worth saying out loud rather than showing a dead screen."""
+    from isha.remote.page import PAGE
+
+    assert "reachable(true)" in PAGE and "reachable(false)" in PAGE
+    assert "can't reach her" in PAGE
+    # Both the polling loop and the audio upload report their own reachability, so a
+    # failure on either surfaces rather than only one of them.
+    assert PAGE.count("reachable(false)") >= 2
+    # And it backs off rather than hammering a dead host from a pocket.
+    assert "offlineSince ? 2000" in PAGE
+
+
+def test_the_page_warns_when_it_cannot_get_the_microphone():
+    """Browsers refuse getUserMedia on an insecure origin. A silent mic failure is the
+    worst outcome, so the page says why and how to fix it."""
+    from isha.remote.page import PAGE
+
+    assert "isSecureContext" in PAGE
+    assert "tailscale serve" in PAGE

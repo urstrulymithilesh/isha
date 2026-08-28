@@ -235,6 +235,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "him first",
         True,
     ),
+    ProgressEntry(
+        "v1.18 — she says when she cannot be reached", "2026-08-28",
+        "when he is away from the house and something between them breaks — the "
+        "machine asleep, the internet gone, the laptop shut — his phone used to just "
+        "sit there quietly as though nothing had happened. Now it tells him it cannot "
+        "reach her, and how long it has been trying",
+        False,
+    ),
 ]
 
 
