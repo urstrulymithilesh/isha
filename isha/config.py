@@ -135,6 +135,14 @@ class RemoteConfig:
     # token is mandatory rather than optional — see remote/auth.py.
     host: str = "0.0.0.0"
     token_path: Path = DATA_DIR / "remote-token.txt"
+    # HTTPS with a certificate Isha generates herself, because the browser will not
+    # give the page a microphone otherwise. `tailscale serve` would give a trusted
+    # cert instead, but it publishes this machine's hostname to public Certificate
+    # Transparency logs — declined 2026-09-01 for a project whose whole claim is that
+    # nothing about her is discoverable. The phone warns once; verify the fingerprint
+    # Isha prints at startup and it becomes a check rather than a shrug.
+    tls: bool = True
+    cert_dir: Path = DATA_DIR
     # A phone that stops sending for this long has hung up; the desk mic takes over.
     # Long enough to survive a tunnel hiccup, short enough that a pocketed phone does
     # not hold the floor.

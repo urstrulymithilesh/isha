@@ -243,6 +243,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "reach her, and how long it has been trying",
         False,
     ),
+    ProgressEntry(
+        "v1.19 — she has papers of her own now", "2026-09-01",
+        "his phone would not let her hear him, because browsers refuse a microphone "
+        "to a page that cannot prove who it is. She signs her own proof now, rather "
+        "than asking an authority for one and having this machine's name written into "
+        "a public register in exchange. He checks it once and it is theirs",
+        False,
+    ),
 ]
 
 

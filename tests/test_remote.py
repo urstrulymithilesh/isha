@@ -335,4 +335,19 @@ def test_the_page_warns_when_it_cannot_get_the_microphone():
     from isha.remote.page import PAGE
 
     assert "isSecureContext" in PAGE
-    assert "tailscale serve" in PAGE
+    assert "will not" in PAGE and "microphone" in PAGE
+    # It points at the fix that is actually in use — Isha's own certificate, not
+    # `tailscale serve`, which was declined because it publishes the machine's
+    # hostname to public Certificate Transparency logs.
+    assert "--remote" in PAGE and "certificate" in PAGE
+
+
+def test_the_cli_module_actually_parses():
+    """`python -m isha run --remote` shipped broken once: a mangled escape left an
+    unterminated f-string in __main__.py, and the whole suite stayed green because
+    nothing imports it. Compiling it is cheap and closes that hole."""
+    import py_compile
+    from pathlib import Path
+
+    for module in ("__main__.py", "factory.py", "smoke.py"):
+        py_compile.compile(str(Path("isha") / module), doraise=True)

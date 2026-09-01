@@ -26,3 +26,9 @@ Thumbs.db
 # leaked secret is not the place to rely on an inherited rule.
 data/remote-token.txt
 *remote-token*
+
+# The self-signed cert and its private key. data/ covers them; named explicitly
+# because a private key is not the place to rely on an inherited rule.
+data/remote-cert.pem
+data/remote-key.pem
+*remote-key*

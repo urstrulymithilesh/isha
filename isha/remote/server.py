@@ -135,8 +135,18 @@ class _QuietServer(ThreadingHTTPServer):
 
 
 def start(auth: RemoteAuth, source, channel, *, host: str = "0.0.0.0",
-          port: int = 8766) -> str:
-    """Start the remote server in a daemon thread. Returns the base URL."""
+          port: int = 8766, tls: tuple | None = None) -> str:
+    """Start the remote server in a daemon thread. Returns the base URL.
+
+    `tls` is (cert, key). Without it the page still loads, but the browser will not
+    give it the microphone — so the caller is expected to supply one and the page says
+    so on screen if it finds itself insecure.
+    """
     server = _QuietServer((host, port), _handler(auth, source, channel))
+    scheme = "http"
+    if tls is not None:
+        from isha.remote.tls import wrap
+        server.socket = wrap(server.socket, *tls)
+        scheme = "https"
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://{host}:{port}"
+    return f"{scheme}://{host}:{port}"

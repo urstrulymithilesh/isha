@@ -399,9 +399,24 @@ def _run(argv: list[str]) -> int:
         source = RemoteSource(idle_timeout=CONFIG.remote.idle_timeout_seconds)
         orch.transport = SwitchingTransport(orch.transport, source)
         remote_port = int(_flag_value(argv, "--remote-port") or CONFIG.remote.port)
+        tls = fingerprint_line = None
+        if CONFIG.remote.tls:
+            from isha.remote.tls import CertError, ensure_cert, fingerprint,                 tailscale_identity
+            try:
+                names, ips = tailscale_identity()
+                tls = ensure_cert(CONFIG.remote.cert_dir, names, ips)
+                fingerprint_line = fingerprint(tls[0])
+                remote_host = names[0]
+            except CertError as e:
+                print(f"\n  [remote] no certificate: {e}")
+                print("  [remote] serving plain http — your phone will refuse the mic.")
+                remote_host = "<this machine>"
+        else:
+            remote_host = "<this machine>"
         start_remote(RemoteAuth(token), source, channel,
-                     host=CONFIG.remote.host, port=remote_port)
-        remote_url = f"http://<this machine>:{remote_port}/?t={token}"
+                     host=CONFIG.remote.host, port=remote_port, tls=tls)
+        scheme = "https" if tls else "http"
+        remote_url = f"{scheme}://{remote_host}:{remote_port}/?t={token}"
 
     # Gain / threshold: an explicit --gain wins; else auto-calibrate (unless off).
     gain_override = _flag_value(argv, "--gain")
@@ -434,9 +449,11 @@ def _run(argv: list[str]) -> int:
         print(f"   ui    : {url}  (type there; it joins the same conversation)")
     if remote_url:
         print(f"   phone : {remote_url}")
-        print("           open that on your phone over Tailscale. The mic needs https,")
-        print("           so serve it with:  tailscale serve https / "
-              f"http://127.0.0.1:{remote_port}")
+        print("           open that on your phone with Tailscale connected.")
+        if fingerprint_line:
+            print("           Isha signed her own certificate, so the browser will warn")
+            print("           you once. Check this matches what it shows, then accept:")
+            print(f"             SHA-256 {fingerprint_line}")
         print(f"           token lives in {CONFIG.remote.token_path}")
     print("   Ctrl-C to quit.")
     print("=" * 60)

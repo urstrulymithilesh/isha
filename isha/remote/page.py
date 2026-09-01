@@ -70,8 +70,8 @@ if (!window.isSecureContext) {
   const w = $('#warn');
   w.hidden = false;
   w.textContent = 'This page is not on a secure connection, so the browser will not '
-    + 'give it the microphone. Serve it over https — with Tailscale: tailscale serve '
-    + 'https / http://127.0.0.1:8766';
+    + 'give it the microphone. Restart Isha with --remote so it serves https with its '
+    + 'own certificate, and open the https:// address instead.';
 }
 
 let seen = 0, listening = false, speaking = false, ctx = null, node = null, stream = null;
