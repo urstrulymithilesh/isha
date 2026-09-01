@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `f7a57ac`. 401 tests, 66 commits, 87 files, ~11.3k lines of
+Last updated at commit `1d468c8`. 402 tests, 68 commits, 88 files, ~11.5k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -216,11 +216,21 @@ optional.
 `100.72.53.24`, MagicDNS `jarvis.tail9c1562.ts.net`). Auth verified over the real
 tailnet interface, not localhost: no token 401, bad token 401, real token 200.
 
-**BLOCKED ON ONE TOGGLE:** `tailscale serve` cannot get a certificate until HTTPS is
-enabled for the tailnet — `tailscale cert` returns *"your Tailscale account does not
-support getting TLS certs"*. It is a one-time switch in the admin console under
-DNS -> HTTPS Certificates. Until then the page loads over `http://100.72.53.24:8766`
-but the browser will not give it the microphone.
+**HTTPS is self-signed, deliberately.** `tailscale serve` would issue a trusted
+Let's Encrypt certificate, and in doing so publish `jarvis.tail9c1562.ts.net` to public
+Certificate Transparency logs — a name, not data, but permanently discoverable. Declined
+2026-09-01 for a project whose whole claim is that nothing about her is. `remote/tls.py`
+generates a certificate with the OpenSSL on PATH and serves it through the stdlib `ssl`
+module; SANs cover the MagicDNS name, short name, both tailnet IPs and localhost.
+
+The cost is that the phone warns once, because an unvouched certificate is
+indistinguishable from a forged one *unless checked* — so startup prints the SHA-256
+and asks him to compare it. Verified matching what the socket serves. Android Chrome
+accepts after a tap; **iOS Safari is stricter and may need the certificate installed as
+a profile and trusted under Settings -> General -> About -> Certificate Trust**.
+
+Verified over HTTPS on the real tailnet name: no token 401, bad token 401, real token
+200.
 
 **When the connection drops**, the page says so — "can't reach her — 12s (retrying)" —
 and backs off to a 2s poll. Both the polling loop and the audio upload report
@@ -932,6 +942,14 @@ her a new app without editing `config.py`.
   talks, so you cannot cut her off remotely. On headphones muting is unnecessary and
   it would work — but a browser cannot reliably tell whether headphones are plugged
   in, so it always mutes rather than guessing.
+- **The remote page has not been driven from a real phone yet**, and iOS in
+  particular may reject the self-signed certificate outright until it is installed as
+  a profile. If that proves painful, enabling the tailnet HTTPS toggle is the escape
+  hatch — at the cost of the CT-log exposure described above.
+- **`python -m isha run --remote` shipped broken for one commit** — a mangled escape
+  left an unterminated f-string in `__main__.py` and 401 tests stayed green, because
+  nothing imports the entry point. `test_the_cli_module_actually_parses` compiles it
+  now. Worth remembering: a green suite says nothing about a module no test imports.
 - **The remote page has not been driven from a real phone yet.** The whole pipeline is
   covered by the `remote` smoke scenario over real HTTP and auth is verified over the
   tailnet, but `getUserMedia`, AudioWorklet and iOS playback have only been reasoned
