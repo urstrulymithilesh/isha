@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `1d468c8`. 402 tests, 68 commits, 88 files, ~11.5k lines of
+Last updated at commit `815e97b`. 405 tests, 69 commits, 90 files, ~11.7k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -246,6 +246,10 @@ outcome.
 **Exclusive, not merged**: while the phone has the floor the desk mic is ignored and
 her replies go only to the phone. Two live sources feeding one wake detector would
 interleave room noise with phone audio into a model that needs one continuous stream.
+
+**Every action outcome is printed**, in the shape `[action] DONE — opened 'spotify'
+-> spotify:` / `NOT RUN` / `REFUSED` / `FAILED`. Added after a live session where she
+said she would open something, did not, and printed nothing at all to say so.
 
 **Side effects are confirmed over the phone** (`CONFIG.remote.confirm_actions`).
 Opening things and media keys get one spoken "do you want me to…" first; memory,
@@ -626,6 +630,27 @@ scenario on its first run, not by any unit test.
 Fixed by not ageing out while muted, and refreshing the window on unmute. **Pattern:**
 before treating absence as a signal, ask whether you are the one who caused it.
 
+### One mangled word at the front disables every parser at once
+Reported live: "I said 'can you open Spotify?' and she said 'I'll open Spotify' but
+nothing opened." The stored turn was **"Heeshak, can you open Spotify?"** — whisper's
+rendering of the wake word, past anything the prefix stripper could recognise, because
+that stripper only acts when a *real* wake token sits beside the junk.
+
+Every deterministic parser here anchors at the start of the utterance: actions,
+schedule, forget, digest. So a single unrecognised word in front of a comma silently
+turned all of them off at once, the turn fell through to ordinary conversation, and the
+model said the natural thing — a promise about the world that nothing backed.
+
+Three fixes, because it was three faults: `strip_vocative` drops a leading name-like
+word before a comma (keeping "No, open Chrome" and "Sorry, what?");
+`looks_like_an_action` catches an utterance naming a registry app after an open verb
+that nonetheless parsed as nothing, and she asks rather than improvising; and every
+outcome now prints DONE / NOT RUN / REFUSED / FAILED.
+
+**Pattern:** anchoring a parser at position 0 makes the first token load-bearing for
+every feature at once. When several parsers share that assumption, anything that can
+corrupt the first token is a single point of failure for all of them.
+
 ### Whisper mangles the wake word differently every time
 "hey jarvis" has come back as **"8 Jarvis"**, "A Jarvis", "They Jarvis", **"Stay
 Jarvis"** and **"Meet Jarvis"** — each one leaving a junk prefix that silently broke
@@ -938,6 +963,10 @@ move, run) the ask-first treatment if they are wanted at all, and add a way to t
 her a new app without editing `config.py`.
 
 **Known rough edges, none blocking:**
+- **Only one Isha at a time.** Two copies compete for the microphone and the second
+  simply hears less — it presents as calibration failing twice for no reason, which
+  is exactly how it was found. `data/isha.pid` now names the clash at startup. Stale
+  files do not lock anyone out.
 - **Remote barge-in does not work on speakerphone.** The page mutes the mic while she
   talks, so you cannot cut her off remotely. On headphones muting is unnecessary and
   it would work — but a browser cannot reliably tell whether headphones are plugged
