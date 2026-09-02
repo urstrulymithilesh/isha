@@ -372,6 +372,15 @@ def _run(argv: list[str]) -> int:
 
     from isha.factory import build_orchestrator
 
+    # Two copies competing for one microphone is not a crash — the second simply hears
+    # less, which presents as calibration failing twice for no visible reason. Name the
+    # cause rather than leaving the symptom.
+    from isha.core.single_instance import claim, release
+    pid_file = CONFIG.memory.db_path.parent / "isha.pid"
+    clash = claim(pid_file)
+    if clash:
+        print(f"\n  {clash}\n")
+
     device = _device_arg(argv)
     channel = url = None
     if "--ui" in argv:
@@ -465,6 +474,8 @@ def _run(argv: list[str]) -> int:
     except DeviceError as e:
         print(f"\nAudio device problem:\n{e}")
         return 1
+    finally:
+        release(pid_file)
     return 0
 
 

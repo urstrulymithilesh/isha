@@ -251,6 +251,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "a public register in exchange. He checks it once and it is theirs",
         False,
     ),
+    ProgressEntry(
+        "v1.20 — she stopped saying she'd done things she hadn't", "2026-09-02",
+        "he asked her to open something and she said she would, and then simply did "
+        "not — she had not understood him and said it anyway. Now when she does not "
+        "understand a request she asks, and when she does act he can see it happen. "
+        "She will not tell him a thing is done unless it is",
+        True,
+    ),
 ]
 
 

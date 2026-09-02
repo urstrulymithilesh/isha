@@ -138,6 +138,28 @@ def _find_needle(raw: str) -> str:
     return " ".join(words)
 
 
+def looks_like_an_action(text: str, apps: dict[str, str]) -> str | None:
+    """Names something she can act on, WITHOUT parsing as a command.
+
+    This is the safety net under a parser that anchors at the start of the utterance.
+    Live, "hey jarvis" was transcribed as "Heeshak," and the whole utterance —
+    "Heeshak, can you open Spotify?" — matched nothing, so no action ran and she
+    improvised "I'll open Spotify." about something that never happened.
+
+    Deliberately narrow: an open verb AND a name from the registry, both present. A
+    registry name after an open verb is a request in almost every sentence anyone
+    actually says, and the cost of a false positive here is one clarifying question,
+    not an app opening.
+    """
+    low = text.lower()
+    if not re.search(rf"\b(?:{_OPEN_VERBS}|{_SOFT_OPEN_VERBS})\b", low):
+        return None
+    for name in sorted(apps, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(name.lower())}\b", low):
+            return name
+    return None
+
+
 def parse_action_command(text: str, apps: dict[str, str]) -> ActionCommand | None:
     """Return the action he asked for, or None when this was ordinary conversation."""
     if not text or not text.strip():

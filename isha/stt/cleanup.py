@@ -33,6 +33,39 @@ def _is_filler(word: str) -> bool:
     return word in _FILLER or word.isdigit()
 
 
+# Words that legitimately open a sentence before a comma and carry meaning. Anything
+# NOT in here, sitting alone in front of a comma, is almost certainly her name coming
+# back mangled — and every deterministic parser downstream is anchored to the start of
+# the utterance, so leaving it there silently disables all of them.
+_REAL_OPENERS = frozenset("""
+no yes yeah nope sure right wait sorry look listen well actually honestly please
+anyway besides however though still also first second finally meanwhile otherwise
+""".split())
+_VOCATIVE = re.compile(r"^([A-Za-z']{2,})\s*,\s*(?=\S)")
+
+
+def strip_vocative(text: str) -> str:
+    """Drop a leading name-like word before a comma.
+
+    Found live: "hey jarvis" reached the transcript as **"Heeshak, can you open
+    Spotify?"**. The wake-prefix stripper could not help — it only acts when a real
+    wake token follows — so the action parser, which anchors at the start of the
+    utterance, matched nothing. No action ran, and she cheerfully said "I'll open
+    Spotify" about something that never happened.
+
+    Only ONE word, only before a comma, and only when it is not a word that opens a
+    sentence meaningfully — so "No, open Chrome" and "Sorry, what?" keep their first
+    word while "Heeshak," and "Ayesha," are dropped.
+    """
+    match = _VOCATIVE.match(text or "")
+    if not match:
+        return text
+    word = match.group(1).lower()
+    if word in _REAL_OPENERS:
+        return text
+    return text[match.end():]
+
+
 def strip_wake_prefix(text: str, wake_model: str) -> str:
     """Remove a leading wake-word utterance ("hey_jarvis" -> "hey", "jarvis").
 

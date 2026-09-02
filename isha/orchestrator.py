@@ -47,7 +47,7 @@ from isha.digest.parse import asks_whats_new
 from isha.memory.corpus import subjects_mentioned
 from isha.memory.extraction import FactExtractor, parse_extracted_facts
 from isha.actions.parse import (MediaCommand, OpenCommand, UnknownTarget,
-                                parse_action_command)
+                                looks_like_an_action, parse_action_command)
 from isha.actions.run import ActionError, find_files, media_key, open_target
 from isha.memory.temporal import parse_temporal_query
 from isha.persona import recall_prompt
@@ -56,7 +56,7 @@ from isha.schedule.parse import (CancelCommand, IncompleteCommand, QueryCommand,
                                  RescheduleCommand, _phrase_delay,
                                  parse_schedule_command)
 from isha.reply_style import trim_reflexive_question
-from isha.stt.cleanup import strip_wake_prefix
+from isha.stt.cleanup import strip_vocative, strip_wake_prefix
 from isha.tts.sentences import split_complete_sentences
 from isha.tts.speech_text import clean_for_speech
 
@@ -392,6 +392,11 @@ class Orchestrator:
         # The pre-roll means the wake word itself is usually in the transcript, and
         # that prefix measurably breaks fact extraction on 3b. Strip it once, here.
         text = strip_wake_prefix(text, CONFIG.wake.model)
+        # And a name-shaped word left in front of a comma, which the wake stripper
+        # cannot touch because there is no wake token beside it. Live, "hey jarvis"
+        # arrived as "Heeshak," and silently disabled every parser anchored to the
+        # start of the utterance.
+        text = strip_vocative(text)
         await self._handle_utterance(text, via="voice")
 
     def _start_text_turn(self, text: str) -> None:
@@ -890,6 +895,24 @@ class Orchestrator:
                       f"confirmed — dropped")
 
         if cmd is None:
+            # Nothing parsed. If he clearly named something she can act on, that is a
+            # MISS, not small talk — and a miss she must not paper over. Live, she
+            # answered "I'll open Spotify." to a request that never reached the
+            # parser: a promise about the world, which is the same class as the
+            # unknown-app refusal that dropped its negation. Spoken deterministically
+            # for the same reason.
+            missed = looks_like_an_action(text, CONFIG.actions.apps)
+            if missed is not None:
+                print(f"  [action] NOT RUN — heard something about {missed!r} but could "
+                      f"not read it as a command: {text!r}")
+                line = f"I didn't catch that — did you want me to open {missed}?"
+                self._pending_action = None
+                await self._speak(line)
+                if self.text_channel is not None:
+                    self.text_channel.log("isha", line)
+                self._history.append(Message("assistant", line))
+                self._remember_turn(text, line)
+                return ""
             return None
 
         if isinstance(cmd, UnknownTarget):
@@ -898,7 +921,7 @@ class Orchestrator:
             # live the 3B dropped the negation — it said "I can open Photoshop." about
             # an app it cannot open. A claim of ability is not delegable to a model
             # that loses the word "not" one time in three.
-            print(f"  [action] asked to open {cmd.name!r} — not in the registry")
+            print(f"  [action] REFUSED — {cmd.name!r} is not in the registry")
             line = f"I don't have {cmd.name} — that's not something I can open."
             await self._speak(line)
             if self.text_channel is not None:
@@ -932,10 +955,10 @@ class Orchestrator:
             try:
                 await asyncio.to_thread(open_target, cmd.target)
             except ActionError as e:
-                print(f"  [action] open {cmd.name!r} failed: {e}")
+                print(f"  [action] FAILED to open {cmd.name!r}: {e}")
                 return (f"You tried to open {cmd.name} for him and it did not work. Tell him it "
                         "failed, in one short sentence. Do not claim it opened.")
-            print(f"  [action] opened {cmd.name!r} ({cmd.target})")
+            print(f"  [action] DONE — opened {cmd.name!r} -> {cmd.target}")
             return (f"You just opened {cmd.name} on his computer, and it worked. Say so in a few "
                     "words — this is a small thing, not an announcement.")
 
@@ -943,10 +966,10 @@ class Orchestrator:
             try:
                 await asyncio.to_thread(media_key, cmd.action)
             except ActionError as e:
-                print(f"  [action] media {cmd.action} failed: {e}")
+                print(f"  [action] FAILED to press {cmd.action}: {e}")
                 return ("You tried to control whatever is playing and could not. Tell him it "
                         "didn't work, briefly.")
-            print(f"  [action] media key: {cmd.action}")
+            print(f"  [action] DONE — pressed media key {cmd.action}")
             return (f"You just pressed {cmd.action.replace('_', '/')} for whatever is playing. "
                     "Acknowledge it in a couple of words at most — he is listening to something, "
                     "so do not talk over it.")
@@ -955,7 +978,8 @@ class Orchestrator:
             find_files, cmd.needle, CONFIG.actions.search_roots,
             limit=CONFIG.actions.search_limit, max_depth=CONFIG.actions.search_max_depth,
         )
-        print(f"  [action] searched for {cmd.needle!r} — {len(hits)} hit(s)")
+        print(f"  [action] DONE — searched for {cmd.needle!r}, {len(hits)} hit(s)"
+              + (f": {', '.join(h.name for h in hits)}" if hits else ""))
         if not hits:
             return (f"He asked you to find {cmd.needle!r}. You looked through his documents, "
                     "desktop and downloads and found NOTHING matching. Tell him you couldn't "

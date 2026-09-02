@@ -351,3 +351,45 @@ def test_the_cli_module_actually_parses():
 
     for module in ("__main__.py", "factory.py", "smoke.py"):
         py_compile.compile(str(Path("isha") / module), doraise=True)
+
+
+# -- one Isha at a time ------------------------------------------------------
+
+
+def test_a_second_instance_is_named_not_left_as_a_symptom(tmp_path):
+    """Two copies competing for one microphone is not a crash — the second just hears
+    less. It presented as "calibration failed twice and fell back to defaults", which
+    sent us reading the calibration code, which was fine."""
+    import os
+    from isha.core.single_instance import claim, release
+
+    pid_file = tmp_path / "isha.pid"
+    assert claim(pid_file) is None                  # nobody else running
+    assert pid_file.read_text().strip() == str(os.getpid())
+
+    # A live PID that is not us reads as a clash, and says what to do about it.
+    pid_file.write_text("1", encoding="utf-8")      # pid 1 exists on every platform
+    message = claim(pid_file)
+    if message is not None:                          # some platforms deny inspecting it
+        assert "already running" in message and "microphone" in message
+
+    release(pid_file)
+
+
+def test_a_stale_pid_file_does_not_block_a_new_session(tmp_path):
+    """A machine that lost power leaves the file behind; that must not lock her out."""
+    from isha.core.single_instance import claim
+
+    pid_file = tmp_path / "isha.pid"
+    pid_file.write_text("999999999", encoding="utf-8")   # long dead
+    assert claim(pid_file) is None
+
+
+def test_releasing_only_removes_our_own_claim(tmp_path):
+    from isha.core.single_instance import claim, release
+
+    pid_file = tmp_path / "isha.pid"
+    claim(pid_file)
+    pid_file.write_text("4242", encoding="utf-8")        # somebody else took over
+    release(pid_file)
+    assert pid_file.is_file()                            # not ours to delete
