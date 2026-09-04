@@ -366,6 +366,37 @@ def _digest_cmd(argv: list[str]) -> int:
     return 0
 
 
+def _pair_cmd(argv: list[str]) -> int:
+    """Print the phone link and its QR again, without restarting her.
+
+        python -m isha pair          # link + QR
+        python -m isha pair --url    # just the URL, for copying somewhere
+
+    Exists because the link scrolls off a busy terminal, and re-typing the token by
+    hand is the thing that produced "bad token" in the first place.
+    """
+    from isha.remote.auth import load_or_create
+    from isha.remote.tls import qr_lines, tailscale_identity
+
+    token = load_or_create(CONFIG.remote.token_path)
+    names, _ips = tailscale_identity()
+    scheme = "https" if CONFIG.remote.tls else "http"
+    url = f"{scheme}://{names[0]}:{CONFIG.remote.port}/?t={token}"
+    if "--url" in argv:
+        print(url)
+        return 0
+    print(f"\n  {url}\n")
+    rows = qr_lines(url)
+    if rows:
+        for row in rows:
+            print("   " + row)
+        print("\n  scan that with your phone's camera — nothing to type.")
+    else:
+        print("  (install segno for a scannable QR: pip install segno)")
+    print("  Isha must be running with --remote for the link to answer.")
+    return 0
+
+
 def _run(argv: list[str]) -> int:
     from isha.audio.calibrate import calibrate
     from isha.audio.devices import DeviceError
@@ -464,6 +495,16 @@ def _run(argv: list[str]) -> int:
             print("           you once. Check this matches what it shows, then accept:")
             print(f"             SHA-256 {fingerprint_line}")
         print(f"           token lives in {CONFIG.remote.token_path}")
+        # Scan rather than type. The 43-character token is exactly what went wrong
+        # last time — told only "bad token", he re-typed a string that was fine while
+        # the link had simply lost its ?t= tail.
+        from isha.remote.tls import qr_lines
+        rows = qr_lines(remote_url)
+        if rows:
+            print()
+            for row in rows:
+                print("   " + row)
+            print("   scan that with your phone's camera — nothing to type.")
     print("   Ctrl-C to quit.")
     print("=" * 60)
 
@@ -515,6 +556,8 @@ def main(argv: list[str] | None = None) -> int:
         return _seed_cmd(argv[1:])
     if argv and argv[0] == "learn":
         return _learn_cmd(argv[1:])
+    if argv and argv[0] == "pair":
+        return _pair_cmd(argv[1:])
     if argv and argv[0] == "digest":
         return _digest_cmd(argv[1:])
     if argv and argv[0] == "smoke":

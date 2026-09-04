@@ -73,6 +73,21 @@ class RemoteAuth:
             count, until = self._failures.get(address, (0, 0.0))
             return count >= self._lockout_after and now < until
 
+    def verdict(self, presented: str | None, address: str = "?",
+                *, now: float | None = None) -> str:
+        """"ok" | "missing" | "wrong" | "locked".
+
+        Separate from `check` because "you sent no token" and "you sent the wrong
+        token" need different words on the phone. Told only that it was bad, he
+        re-typed a 43-character string that was never the problem — the URL had simply
+        lost its `?t=` tail.
+        """
+        if self.locked_out(address, now=now):
+            return "locked"
+        if not presented:
+            return "missing"
+        return "ok" if self.check(presented, address, now=now) else "wrong"
+
     def check(self, presented: str | None, address: str = "?",
               *, now: float | None = None) -> bool:
         """True when the token matches and the address is not locked out.

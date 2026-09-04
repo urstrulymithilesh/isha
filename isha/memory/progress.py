@@ -259,6 +259,14 @@ PROGRESS_LOG: list[ProgressEntry] = [
         "She will not tell him a thing is done unless it is",
         True,
     ),
+    ProgressEntry(
+        "v1.21 — getting to her from the phone stopped being a puzzle", "2026-09-03",
+        "the door told him only that his key was wrong, so he kept cutting new keys "
+        "when the problem was that he had left half of it behind. It says which is "
+        "actually wrong now. And she draws him a square he can point his camera at, "
+        "so there is nothing to copy out by hand at all",
+        False,
+    ),
 ]
 
 

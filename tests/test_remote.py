@@ -393,3 +393,47 @@ def test_releasing_only_removes_our_own_claim(tmp_path):
     pid_file.write_text("4242", encoding="utf-8")        # somebody else took over
     release(pid_file)
     assert pid_file.is_file()                            # not ours to delete
+
+
+# -- why the token was refused -----------------------------------------------
+
+
+def test_the_reason_for_refusal_is_distinguished():
+    """Told only "bad token", he re-typed a 43-character string that was never wrong —
+    the link had simply lost its ?t= tail. Each cause needs its own words."""
+    auth = RemoteAuth("secret", lockout_after=2, lockout_seconds=300)
+    assert auth.verdict("secret", "1.1.1.1") == "ok"
+    assert auth.verdict(None, "1.1.1.1") == "missing"
+    assert auth.verdict("", "1.1.1.1") == "missing"
+    assert auth.verdict("nope", "1.1.1.1") == "wrong"
+
+
+def test_lockout_reads_as_locked_not_as_a_wrong_token():
+    """Otherwise the advice is "check your token" when the token is already right."""
+    auth = RemoteAuth("secret", lockout_after=2, lockout_seconds=300)
+    for _ in range(2):
+        auth.verdict("nope", "9.9.9.9")
+    assert auth.verdict("secret", "9.9.9.9") == "locked"
+
+
+def test_a_qr_is_produced_for_the_link():
+    """Scanning cannot drop the ?t= tail; typing 43 characters can."""
+    from isha.remote.tls import qr_lines
+
+    rows = qr_lines("https://jarvis.example.ts.net:8766/?t=abc123")
+    assert rows and len(rows) > 8
+    assert all(len(r) == len(rows[0]) for r in rows)     # square, not ragged
+
+
+def test_the_qr_never_breaks_a_console_that_cannot_draw_it(monkeypatch):
+    """A Windows console is cp1252 by default; printing block characters there raises,
+    and a convenience must never be able to take down startup."""
+    import io
+    from isha.remote import tls
+
+    monkeypatch.setattr(tls.sys, "stdout", io.TextIOWrapper(io.BytesIO(),
+                                                            encoding="cp1252"))
+    rows = tls.qr_lines("https://example/?t=x")
+    assert rows
+    for row in rows:
+        row.encode("cp1252")                              # would raise if it used blocks

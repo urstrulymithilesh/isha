@@ -25,6 +25,7 @@ import hashlib
 import json
 import shutil
 import ssl
+import sys
 import stat
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -129,3 +130,58 @@ def wrap(server_socket, cert: Path, key: Path):
     context.load_cert_chain(certfile=str(cert), keyfile=str(key))
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     return context.wrap_socket(server_socket, server_side=True)
+
+
+def qr_lines(url: str) -> list[str]:
+    """The pairing link as a QR code, drawn with block characters.
+
+    Here because the alternative is typing a 43-character token on a phone, which is
+    how "bad token" happened: told only that the token was bad, he re-typed a string
+    that was never wrong — the link had lost its `?t=` tail. A scan cannot lose a tail.
+
+    Returns [] if segno is missing, so a failed import costs the convenience and not
+    the session.
+    """
+    try:
+        import segno
+    except ImportError:
+        return []
+    code = segno.make(url, error="m")
+    # Two half-height blocks per text row keeps the square roughly square in a
+    # terminal, where cells are about twice as tall as they are wide.
+    matrix = [[bool(v) for v in row] for row in code.matrix]
+    quiet = 2
+    width = len(matrix[0]) + quiet * 2
+    padded = ([[False] * width] * quiet
+              + [[False] * quiet + row + [False] * quiet for row in matrix]
+              + [[False] * width] * quiet)
+    # A Windows console is cp1252 by default and raises on block characters. Printing
+    # a QR must never be able to take down startup, so check first and fall back to
+    # ASCII — twice as wide per module, still perfectly scannable.
+    blocks = "█▀▄"
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        blocks.encode(encoding)
+        fancy = True
+    except (UnicodeEncodeError, LookupError):
+        fancy = False
+
+    lines = []
+    step = 2 if fancy else 1
+    for top in range(0, len(padded), step):
+        upper = padded[top]
+        if not fancy:
+            # Dark module = two spaces on a light cell; light = two blocks. Inverted
+            # for a dark terminal, same as below.
+            lines.append("".join("  " if upper[x] else "██"
+                                 for x in range(width)).replace("█", "#"))
+            continue
+        lower = padded[top + 1] if top + 1 < len(padded) else [False] * width
+        out = []
+        for x in range(width):
+            # Dark modules must render dark: terminals here are light-on-dark, so an
+            # unset module is the "ink" and a set module is the paper.
+            u, l = not upper[x], not lower[x]
+            out.append("█" if u and l else "▀" if u else "▄" if l else " ")
+        lines.append("".join(out))
+    return lines

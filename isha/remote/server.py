@@ -53,10 +53,22 @@ def _handler(auth: RemoteAuth, source, channel):
         def _json(self, code, obj):
             self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
+        # One message per cause. "bad token" sent him re-typing a 43-character string
+        # when the URL had simply lost its ?t= tail.
+        _WHY = {
+            "missing": "No token in the request. Open the full link Isha printed at "
+                       "startup — the part after ?t= is what lets you in.",
+            "wrong": "That token is not the one on this machine. Use the link Isha "
+                     "printed at startup, or scan her QR code.",
+            "locked": "Too many wrong tokens from this device. Wait five minutes and "
+                      "use the link Isha printed at startup.",
+        }
+
         def _authed(self) -> bool:
-            if auth.check(token_from_request(self.headers, self.path), self._who):
+            why = auth.verdict(token_from_request(self.headers, self.path), self._who)
+            if why == "ok":
                 return True
-            self._json(401, {"error": "bad token"})
+            self._json(401, {"error": why, "detail": self._WHY[why]})
             return False
 
         # -- routes --------------------------------------------------------
@@ -89,11 +101,17 @@ def _handler(auth: RemoteAuth, source, channel):
                 return
             # The page itself. Served on any other path so a bare host name works;
             # the token may ride in the query string on this one request only.
-            if not self._authed():
-                self._send(401, b"<!doctype html><meta charset=utf-8>"
-                                b"<body style='background:#000;color:#b06a8f;"
-                                b"font:16px ui-monospace;padding:2rem'>"
-                                b"Wrong or missing token.", "text/html; charset=utf-8")
+            why = auth.verdict(token_from_request(self.headers, self.path), self._who)
+            if why != "ok":
+                body = (
+                    "<!doctype html><meta charset=utf-8>"
+                    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                    "<body style=\"background:#000;color:#fff;font:16px/1.6 "
+                    "ui-monospace,monospace;padding:2rem\">"
+                    f"<p style='color:#b06a8f'>{self._WHY[why]}</p>"
+                    "<p style='color:#555'>Isha is running and reachable — this is only "
+                    "about the token.</p>").encode("utf-8")
+                self._send(401, body, "text/html; charset=utf-8")
                 return
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
 
