@@ -4,7 +4,7 @@
 Isha is meant to become, what is actually built, what was deliberately not built and
 why, what to do next, and the failure patterns that were expensive to learn.**
 
-Last updated at commit `815e97b`. 405 tests, 69 commits, 90 files, ~11.7k lines of
+Last updated at commit `bd1c39e`. 409 tests, 71 commits, 90 files, ~11.9k lines of
 Python, working tree clean and synced with `github.com/urstrulymithilesh/isha`.
 
 ---
@@ -246,6 +246,13 @@ outcome.
 **Exclusive, not merged**: while the phone has the floor the desk mic is ignored and
 her replies go only to the phone. Two live sources feeding one wake detector would
 interleave room noise with phone audio into a model that needs one continuous stream.
+
+**Getting the link onto the phone:** `python -m isha pair` prints it with a
+scannable QR (`--url` for the bare URL); startup prints one too. A refused token now
+says WHICH cause — missing, wrong, or locked out — because "bad token" for all three
+sent him re-typing a 43-character string that was fine while the link had lost its
+`?t=` tail. The locked case matters most: while locked out the CORRECT token is also
+refused, so "check your token" was actively misleading.
 
 **Every action outcome is printed**, in the shape `[action] DONE — opened 'spotify'
 -> spotify:` / `NOT RUN` / `REFUSED` / `FAILED`. Added after a live session where she
@@ -629,6 +636,19 @@ scenario on its first run, not by any unit test.
 
 Fixed by not ageing out while muted, and refreshing the window on unmute. **Pattern:**
 before treating absence as a signal, ask whether you are the one who caused it.
+
+### An error message that cannot distinguish causes sends people the wrong way
+The remote server answered "bad token" whether none was sent, a wrong one was sent, or
+the address was locked out after five failures. He read it the only way it could be
+read and re-typed the token — which had never been wrong. Worse, during a lockout the
+*correct* token is also refused, so the advice pointed exactly away from the fix.
+
+Three causes now carry three messages, and `isha pair` removes the typing entirely
+with a QR.
+
+**Pattern:** collapsing distinct failures into one message does not simplify anything;
+it moves the diagnosis onto the person least able to do it. If the code knows which of
+three things went wrong, say which.
 
 ### One mangled word at the front disables every parser at once
 Reported live: "I said 'can you open Spotify?' and she said 'I'll open Spotify' but
