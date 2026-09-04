@@ -437,3 +437,25 @@ def test_the_qr_never_breaks_a_console_that_cannot_draw_it(monkeypatch):
     assert rows
     for row in rows:
         row.encode("cp1252")                              # would raise if it used blocks
+
+
+def test_the_pairing_link_can_skip_dns(monkeypatch):
+    """MagicDNS only resolves while Tailscale is actually connected on the phone, so a
+    dropped tunnel shows up as ERR_NAME_NOT_RESOLVED — which reads like a dead server
+    rather than a disconnected VPN. The IP is in the certificate's SANs for exactly
+    this reason, so an IP link is a complete fallback, not just a diagnostic."""
+    from isha.remote import tls
+
+    monkeypatch.setattr(tls, "tailscale_identity",
+                        lambda: (["jarvis.example.ts.net", "localhost"],
+                                 ["127.0.0.1", "100.72.53.24"]))
+    names, ips = tls.tailscale_identity()
+    tailnet = [i for i in ips if i.startswith("100.")]
+    assert tailnet == ["100.72.53.24"]
+    assert qr_lines_ok(f"https://{tailnet[0]}:8766/?t=abc")
+
+
+def qr_lines_ok(url):
+    from isha.remote.tls import qr_lines
+    rows = qr_lines(url)
+    return bool(rows) and all(len(r) == len(rows[0]) for r in rows)

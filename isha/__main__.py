@@ -379,9 +379,20 @@ def _pair_cmd(argv: list[str]) -> int:
     from isha.remote.tls import qr_lines, tailscale_identity
 
     token = load_or_create(CONFIG.remote.token_path)
-    names, _ips = tailscale_identity()
+    names, ips = tailscale_identity()
     scheme = "https" if CONFIG.remote.tls else "http"
-    url = f"{scheme}://{names[0]}:{CONFIG.remote.port}/?t={token}"
+    # --ip skips MagicDNS entirely. Worth having permanently, not just for one
+    # diagnosis: the name only resolves while Tailscale is actually connected on the
+    # phone, so a dropped tunnel shows up as ERR_NAME_NOT_RESOLVED, which reads like a
+    # dead server rather than a disconnected VPN. The IP is in the certificate too.
+    host = names[0]
+    if "--ip" in argv:
+        tailnet_ips = [i for i in ips if i.startswith("100.") ]
+        if not tailnet_ips:
+            print("  No tailnet IP found — is Tailscale running on this machine?")
+            return 1
+        host = tailnet_ips[0]
+    url = f"{scheme}://{host}:{CONFIG.remote.port}/?t={token}"
     if "--url" in argv:
         print(url)
         return 0
